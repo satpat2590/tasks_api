@@ -22,6 +22,74 @@ This will simply run the uvicorn web server on post 3000 locally. You can use ht
 
 TBA!
 
+## Endpoints (as of 05/31/2025)
+
+GET /
+
+ - The main endpoint to return any regular data which will verify that you are connected to the API. 
+ - There will be authentication which is required prior to clients being able to connect to the API, so this endpoint will be called once auth is verified. 
+
+GET /api/tasks
+
+ - This endpoint will return a JSON separated list of tasks with all of their columns present.  
+
+```python
+class TaskResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str]
+    category: str
+    priority: int
+    due_date: Optional[datetime]
+    is_recurring: bool
+    recurrence_pattern: Optional[str]
+    is_active: bool
+    created_at: datetime
+    needs_completion: Optional[bool] = None
+    last_completed: Optional[datetime] = None
+```
+
+POST /api/tasks 
+
+ - This endpoint will allow you to send a JSON body containing various field names which will then get validated by backend and then formatted into an INSERT query inside the database. 
+ - Simply pass in a JSON object using the data definition below. 
+
+```python
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    category: str
+    priority: int = 3
+    due_date: Optional[datetime] = None
+    is_recurring: bool = False
+    recurrence_pattern: Optional[str] = None
+```
+
+PATCH /api/tasks/{task_id}
+
+ - You can edit your tasks using this endpoint. 
+ - Simply pass in a JSON object using the data definition below. 
+
+```python
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    priority: Optional[int] = None
+    due_date: Optional[datetime] = None
+    is_recurring: Optional[bool] = None
+    recurrence_pattern: Optional[str] = None
+    is_active: Optional[bool] = None
+```
+
+PATCH /api/tasks/disable/{task_id}
+
+ - 
+
+DELETE /api/tasks/{task_id}
+
+ - 
+
 
 # Supabase database layout 
 

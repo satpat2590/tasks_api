@@ -43,6 +43,9 @@ def read_root():
 async def get_active_tasks():
     """
         Retrieve all active tasks
+
+        :request: NONE
+        :response: A list of TaskResponse objects
     """
     response = supabase.table('tasks').select("*").eq('is_active', True).execute()
     return response.data
@@ -50,7 +53,10 @@ async def get_active_tasks():
 @app.post("/api/tasks", response_model=TaskResponse)
 async def create_task(task: TaskCreate):
     """
-        Pass in a TaskCreate object
+        Create a new task using the TaskCreate data definition in /utils/data.py
+
+        :request: A TaskCreate object
+        :response: A TaskResponse object
     """
     try:
         response = supabase.table('tasks').insert({
@@ -71,7 +77,10 @@ async def create_task(task: TaskCreate):
 @app.patch("/api/tasks/{task_id}", response_model=TaskResponse)
 async def update_task(task_id: int, task: TaskUpdate):
     """
-        Update specific fields of a task
+        Update fields of a task based on the TaskUpdate data definition in /utils/data.py
+
+        :request: A TaskUpdate object
+        :response: A TaskResponse object with the new fields of the updated task
     """
     try:
      # Populate the JSON request body so that you can update the fields in the row for the task_id
@@ -94,7 +103,8 @@ async def update_task(task_id: int, task: TaskUpdate):
             update_data["is_active"] = task.is_active
         
         # Always update the updated_at timestamp
-        update_data["updated_at"] = datetime.now().isoformat()
+     # DISABLED SINCE THERE IS A TRIGGER IN THE DATABASE WHICH AUTOMATICALLY UPDATES THE 'updated_at' FIELD ON UPDATE QUERIES
+        #update_data["updated_at"] = datetime.now().isoformat()
         
         response = supabase.table('tasks').update(update_data).eq('id', task_id).execute()
         
@@ -105,10 +115,13 @@ async def update_task(task_id: int, task: TaskUpdate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: int):
+@app.patch("/api/tasks/disable/{task_id}")
+async def disable_task(task_id: int):
     """
-        Soft delete a task by setting is_active to False
+        Soft 'delete' a task by setting is_active to False
+
+        :request: NONE
+        :response: Message verifying that task was deactivated successfully
     """
     try:
         response = supabase.table('tasks').update({
@@ -120,5 +133,31 @@ async def delete_task(task_id: int):
             raise HTTPException(status_code=404, detail="Task not found")
             
         return {"message": "Task deactivated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+
+@app.delete("/api/tasks/{task_id}")
+async def hard_delete_task(task_id: int):
+    """
+        Hard delete a task from the table entirely
+
+        :request: NONE
+        :response: Message verifying that task was permanently removed from table
+    """
+    try:
+     # Check if task exists
+        existing_task = supabase.table('tasks').select("*").eq('id', task_id).execute()
+        if not existing_task.data:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+     # Delete dependent records first (optional)
+        supabase.table('notifications').delete().eq('task_id', task_id).execute()
+        supabase.table('task_completions').delete().eq('task_id', task_id).execute()
+
+     # Finally, delete the task
+        supabase.table('tasks').delete().eq('id', task_id).execute()
+
+        return {"message": "Task and all related records permanently deleted"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
