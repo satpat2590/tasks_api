@@ -2,6 +2,27 @@
 FastAPI project which will interface with Supabase to perform CRUD operations on a database which consists of various Tasks + other metadata
 
 
+# Description
+
+I need to hold myself accountable for my life and to strive for experiential growth. To do so, I will create a task manager which will be able to store and modify tasks, as well as an Accountability System which will help me stay on track with the growth I envision. 
+
+# Run Methodology
+
+It's as simple as: 
+```bash
+./run.sh 
+```
+
+This will simply run the uvicorn web server on post 3000 locally. You can use http://localhost:3000 to test the endpoints using something like Postman or any client. 
+
+<b>Note that currently, we don't have the ability to host the API on a dedicated server, so calls from servers external to local network will FAIL.</b>
+
+
+# Technical Layout
+
+TBA!
+
+
 # Supabase database layout 
 
 -- WARNING: This schema is for context only and is not meant to be run.
@@ -59,3 +80,5 @@ Side notes:
 - Response is in response.data
 - Dates need .isoformat() for JSON serialization
 - Supabase returns the inserted row automatically
+
+

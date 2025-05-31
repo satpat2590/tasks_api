@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 from utils.auth import verify_credentials
+from utils.data import TaskCreate, TaskResponse, TaskUpdate
 
 # Load in the .env file so you can use your env variables
 currdir = Path(__file__).resolve().parent
@@ -32,31 +33,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-######## Data definition for the /api/tasks endpoints pertaining to Tasks table
-class TaskCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    category: str
-    priority: int = 3
-    due_date: Optional[datetime] = None
-    is_recurring: bool = False
-    recurrence_pattern: Optional[str] = None
 
-class TaskResponse(BaseModel):
-    id: int
-    title: str
-    description: Optional[str]
-    category: str
-    priority: int
-    due_date: Optional[datetime]
-    is_recurring: bool
-    recurrence_pattern: Optional[str]
-    is_active: bool
-    created_at: datetime
-    needs_completion: Optional[bool] = None
-    last_completed: Optional[datetime] = None
-
-# Endpoint implementation for our lovely web server API
+######## Endpoint implementation for our lovely web server API
 @app.get("/")
 def read_root():
     return {"message": "We WAZ KANGZZZZ!!!!! (Indo-Aryan Edition)"}
@@ -86,5 +64,61 @@ async def create_task(task: TaskCreate):
         }).execute()
         
         return response.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/api/tasks/{task_id}", response_model=TaskResponse)
+async def update_task(task_id: int, task: TaskUpdate):
+    """
+        Update specific fields of a task
+    """
+    try:
+     # Populate the JSON request body so that you can update the fields in the row for the task_id
+        update_data = {}
+        if task.title is not None:
+            update_data["title"] = task.title
+        if task.description is not None:
+            update_data["description"] = task.description
+        if task.category is not None:
+            update_data["category"] = task.category
+        if task.priority is not None:
+            update_data["priority"] = task.priority
+        if task.due_date is not None:
+            update_data["due_date"] = task.due_date.isoformat()
+        if task.is_recurring is not None:
+            update_data["is_recurring"] = task.is_recurring
+        if task.recurrence_pattern is not None:
+            update_data["recurrence_pattern"] = task.recurrence_pattern
+        if task.is_active is not None:
+            update_data["is_active"] = task.is_active
+        
+        # Always update the updated_at timestamp
+        update_data["updated_at"] = datetime.now().isoformat()
+        
+        response = supabase.table('tasks').update(update_data).eq('id', task_id).execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Task not found")
+            
+        return response.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: int):
+    """
+        Soft delete a task by setting is_active to False
+    """
+    try:
+        response = supabase.table('tasks').update({
+            "is_active": False,
+            "updated_at": datetime.now().isoformat()
+        }).eq('id', task_id).execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Task not found")
+            
+        return {"message": "Task deactivated successfully"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
