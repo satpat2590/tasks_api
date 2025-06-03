@@ -39,6 +39,14 @@ app.add_middleware(
 def read_root():
     return {"message": "We WAZ KANGZZZZ!!!!! (Indo-Aryan Edition)"}
 
+@app.head("/")
+async def head_root():
+    """
+    Handles HEAD requests for the root path.
+    This is often used for health checks.
+    """
+    return  # Returning nothing (or an empty string) is sufficient for HEAD
+
 @app.get("/api/tasks", response_model=List[TaskResponse])
 async def get_active_tasks():
     """
