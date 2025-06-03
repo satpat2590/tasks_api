@@ -1,5 +1,6 @@
 # main.py
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
@@ -12,9 +13,8 @@ from utils.auth import verify_credentials
 from utils.data import TaskCreate, TaskResponse, TaskUpdate
 
 # Load in the .env file so you can use your env variables
-currdir = Path(__file__).resolve().parent
-envpath = currdir / '.env'
-load_dotenv(envpath)
+#currdir = Path(__file__).resolve().parent
+#envpath = currdir / '.env'
 
 # Set up the FastAPI backend. Use uvicorn as your web server (preferably).
 app = FastAPI()
@@ -48,7 +48,11 @@ async def get_active_tasks():
         :response: A list of TaskResponse objects
     """
     response = supabase.table('tasks').select("*").eq('is_active', True).execute()
-    return response.data
+    return JSONResponse(
+        content=response.data,
+        media_type="application/json",
+        headers={"Content-Type": "application/json; charset=utf-8"}
+    )
 
 @app.post("/api/tasks", response_model=TaskResponse)
 async def create_task(task: TaskCreate):
