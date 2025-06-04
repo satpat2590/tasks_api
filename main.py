@@ -1,14 +1,14 @@
 # main.py
+import os, re
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import Client, create_client
 from pathlib import Path
 from dotenv import load_dotenv
-import os
 from utils.auth import verify_credentials
 from utils.data import TaskCreate, TaskResponse, TaskUpdate
 
@@ -130,21 +130,62 @@ async def update_task(task_id: int, task: TaskUpdate):
 @app.patch("/api/tasks/disable/{task_id}")
 async def disable_task(task_id: int):
     """
-        Soft 'delete' a task by setting is_active to False
+    Disable task - if recurring, advance due_date; if not, set is_active to False
 
-        :request: NONE
-        :response: Message verifying that task was deactivated successfully
+    :request: None
+    :response: Message verifying that task was completed
     """
     try:
+     # Get the task first
+        task = supabase.table('tasks').select("*").eq('id', task_id).execute()
+        if not task.data:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        task_data = task.data[0]
+        
+     # If not recurring, just disable it
+        if not task_data['is_recurring']:
+            response = supabase.table('tasks').update({
+                "is_active": False
+            }).eq('id', task_id).execute()
+            return {"message": "Task disabled"}
+        
+     # If recurring, calculate next due date
+        current_due = datetime.fromisoformat(task_data['due_date'].replace('Z', '+00:00'))
+        pattern = task_data['recurrence_pattern'].lower()
+        
+     # Calculate next occurrence
+        if pattern == 'daily':
+            next_due = current_due + timedelta(days=1)
+        elif pattern == 'weekly':
+            next_due = current_due + timedelta(weeks=1)
+        elif pattern == 'monthly':
+         # Handle month boundaries properly
+            if current_due.month == 12:
+                next_due = current_due.replace(year=current_due.year + 1, month=1)
+            else:
+                next_due = current_due.replace(month=current_due.month + 1)
+        elif pattern == 'yearly':
+            next_due = current_due.replace(year=current_due.year + 1)
+        elif pattern == 'quad-monthly':
+            next_due = current_due + timedelta(weeks=4)
+        else:
+         # Try to parse custom patterns like "every 3 days"
+            match = re.match(r'every (\d+) days?', pattern)
+            if match:
+                days = int(match.group(1))
+                next_due = current_due + timedelta(days=days)
+            else:
+             # Default to weekly if pattern unrecognized
+                next_due = current_due + timedelta(weeks=1)
+        
+     # Update the due date
         response = supabase.table('tasks').update({
-            "is_active": False,
-            "updated_at": datetime.now().isoformat()
+            "due_date": next_due.isoformat()
         }).eq('id', task_id).execute()
         
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Task not found")
-            
-        return {"message": "Task deactivated successfully"}
+        return {"message": f"Recurring task advanced to {next_due.date()}"}
+        
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     
