@@ -150,3 +150,13 @@ Side notes:
 - Supabase returns the inserted row automatically
 
 
+# Punishment Logic
+
+The flow of the punishments will go like this in terms of code logic: 
+
+1. Retrieve all active tasks
+2. Sort tasks into two buckets
+    A. Tasks which are overdue
+    B. Tasks which are less than 3 hours until due
+3. For all tasks in bucket A, sort further by priority levels, and then perform punishments based on those groupings
+4. For all tasks in bucket B, send an aggressively friendly notification either via email or through Twitter to notify you of your pending tasks 
