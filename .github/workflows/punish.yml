@@ -18,7 +18,7 @@ jobs:
 
       - run: mkdir -p data
 
-      - run: python scripts/punish.py
+      - run: python scripts/punisher.py
         env:
           TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
 
