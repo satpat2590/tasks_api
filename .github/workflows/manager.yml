@@ -1,4 +1,4 @@
-name: Task Punisher
+name: Task Manager
 on:
   schedule:
     - cron: '*/15 * * * *'
@@ -18,14 +18,14 @@ jobs:
 
       - run: mkdir -p data
 
-      - run: python scripts/punisher.py
+      - run: python scripts/manager.py
         env:
           TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
 
-      - name: Check if sent.json exists
-        run: ls -la data/sent.json || echo "File not found"
+      - name: Check if points.json exists
+        run: ls -la data/points.json || echo "File not found"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sent-log
-          path: data/sent.json
+          name: point-log
+          path: data/points.json
