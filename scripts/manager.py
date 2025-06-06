@@ -9,8 +9,8 @@ from pathlib import Path
 # Configuration
 WEB_SERVER_API = "https://tasks-api-71v5.onrender.com"
 SENT_FILE = Path(__file__).parent.parent / "data" / "points.json"
-GIST_ID = os.getenv("GITHUB_GIST_ID")  # Create one gist, use forever
-GITHUB_TOKEN = os.getenv("GITHUB_GIST_PAT")
+GIST_ID = os.getenv("GH_GIST_ID")  # Create one gist, use forever
+GITHUB_TOKEN = os.getenv("GH_GIST_PAT")
 EASTERN_TZ = zoneinfo.ZoneInfo("America/New_York")
 
 def get_points():
