@@ -20,7 +20,8 @@ jobs:
 
       - run: python scripts/manager.py
         env:
-          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          GH_GIST_ID: ${{ secrets.GH_GIST_ID }}
+          GH_GIST_PAT: ${{ secrets.GH_GIST_PAT }}
 
       - name: Check if points.json exists
         run: ls -la data/points.json || echo "File not found"
