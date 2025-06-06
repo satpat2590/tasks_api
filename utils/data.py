@@ -1,6 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
+import zoneinfo
 
 
 ######## Data definition for the /api/tasks endpoints pertaining to Tasks table
@@ -12,6 +13,14 @@ class TaskCreate(BaseModel):
     due_date: Optional[datetime] = None
     is_recurring: bool = False
     recurrence_pattern: Optional[str] = None
+
+    @field_validator('due_date', pre=True)
+    @classmethod
+    def ensure_timezone(cls, v):
+        if v and isinstance(v, datetime) and v.tzinfo is None:
+            eastern = zoneinfo.ZoneInfo("America/New_York")
+            return v.replace(tzinfo=eastern)
+        return v
 
 class TaskResponse(BaseModel):
     id: int
@@ -36,3 +45,11 @@ class TaskUpdate(BaseModel):
     is_recurring: Optional[bool] = None
     recurrence_pattern: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator('due_date', pre=True)
+    @classmethod
+    def ensure_timezone(cls, v):
+        if v and isinstance(v, datetime) and v.tzinfo is None:
+            eastern = zoneinfo.ZoneInfo("America/New_York")
+            return v.replace(tzinfo=eastern)
+        return v

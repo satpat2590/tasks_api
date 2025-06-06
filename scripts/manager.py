@@ -3,6 +3,7 @@ import json
 import requests
 import sys
 from datetime import datetime, timedelta, timezone
+import zoneinfo
 from pathlib import Path
 
 # Configuration
@@ -10,6 +11,7 @@ WEB_SERVER_API = "https://tasks-api-71v5.onrender.com"
 SENT_FILE = Path(__file__).parent.parent / "data" / "points.json"
 GIST_ID = os.getenv("GITHUB_GIST_ID")  # Create one gist, use forever
 GITHUB_TOKEN = os.getenv("GITHUB_GIST_PAT")
+EASTERN_TZ = zoneinfo.ZoneInfo("America/New_York")
 
 def get_points():
     """Fetch current points from Gist"""
@@ -18,6 +20,8 @@ def get_points():
         headers={"Authorization": f"token {GITHUB_TOKEN}"}
     )
     content = res.json()['files']['points.json']['content']
+    print(f"Printing out the content from Github Gist:\n")
+    print(content)
     json_content = json.loads(content)
     if not json_content:
         print(f"The JSON object returned from GH Gist is empty. Setting up template now...")
@@ -81,7 +85,7 @@ def penalize_overdue(task, points_data):
     
     # Mark as deducted
     key = f"{task['id']}_{task['due_date'][:10]}"
-    points_data['last_deductions'][key] = datetime.now(timezone.utc).isoformat()
+    points_data['last_deductions'][key] = datetime.now(EASTERN_TZ).isoformat()
     
     # Log it
     points_data['history'].append({
@@ -90,7 +94,7 @@ def penalize_overdue(task, points_data):
         "category": category,
         "points": -penalty,
         "type": "overdue",
-        "date": datetime.now(timezone.utc).isoformat()
+        "date": datetime.now(EASTERN_TZ).isoformat()
     })
     
     # Trim history to last 100
@@ -107,7 +111,7 @@ def get_tasks():
         
         # Check for successful response
         if res.status_code != 200:
-            print(f"API Error: Received status {res.status_code}")
+            print(f"[ERROR] - API Error: Received status {res.status_code}")
             print(f"Response content: {res.text[:200]}")  # First 200 characters
             return None
             
@@ -115,11 +119,11 @@ def get_tasks():
         try:
             return res.json()
         except json.JSONDecodeError:
-            print(f"JSON Decode Error. Response content: {res.text[:200]}")
+            print(f"[ERROR] - JSON Decode Error. Response content: {res.text[:200]}")
             return None
             
     except requests.exceptions.RequestException as e:
-        print(f"Request failed: {str(e)}")
+        print(f"[ERROR] - Request failed: {str(e)}")
         return None
 
 def sort_tasks(tasks):
@@ -128,7 +132,8 @@ def sort_tasks(tasks):
         print("No tasks to process")
         return [], []
         
-    now = datetime.now(timezone.utc)
+    now = datetime.now(EASTERN_TZ)
+    print(f"[T-MANAGER] - Current time is: {now}")
     overdue = []
     due_soon = []
     
@@ -140,6 +145,7 @@ def sort_tasks(tasks):
             # Handle date formatting safely
             due_date = task['due_date'].replace('Z', '+00:00')
             due = datetime.fromisoformat(due_date)
+            print(f"'{task['title']}' - Due at {due}\n")
             diff = due - now
             
             if diff < timedelta(0):
@@ -147,7 +153,7 @@ def sort_tasks(tasks):
             elif diff < timedelta(hours=3):
                 due_soon.append(task)
         except (KeyError, ValueError) as e:
-            print(f"Error processing task {task.get('id')}: {str(e)}")
+            print(f"[ERROR] - Error processing task {task.get('id')}: {str(e)}")
     
     return overdue, due_soon
 
@@ -161,7 +167,7 @@ def load_sent_log():
         with open(SENT_FILE, 'r') as f:
             return json.load(f)
     except (IOError, json.JSONDecodeError) as e:
-        print(f"Error loading sent log: {str(e)}")
+        print(f"[ERROR] - Error loading sent log: {str(e)}")
         return {}
 
 def save_sent_log(log):
@@ -170,7 +176,7 @@ def save_sent_log(log):
         with open(SENT_FILE, 'w') as f:
             json.dump(log, f, indent=2)
     except IOError as e:
-        print(f"Error saving sent log: {str(e)}")
+        print(f"[ERROR] - Error saving sent log: {str(e)}")
 
 def should_notify(task_id, notification_type, sent_log):
     """Check if we should send notification"""
@@ -187,13 +193,13 @@ def should_notify(task_id, notification_type, sent_log):
         else:  # reminder
             return elapsed > timedelta(hours=6)
     except (KeyError, ValueError) as e:
-        print(f"Error checking notification status: {str(e)}")
+        print(f"[ERROR] - Error checking notification status: {str(e)}")
         return True
 
 def notifier(overdue, due_soon):
     """Send notifications for tasks"""
     if not overdue and not due_soon:
-        print("No tasks to notify about")
+        print("[T-MANAGER] - No tasks to notify about")
         return 0
         
     sent_log = load_sent_log()
@@ -208,7 +214,7 @@ def notifier(overdue, due_soon):
                 messages.append(msg)
                 sent_log[f"{task_id}_overdue"] = datetime.now(timezone.utc).isoformat()
         except KeyError as e:
-            print(f"Error processing overdue task: {str(e)}")
+            print(f"[ERROR] - Error processing overdue task: {str(e)}")
 
     # Process due soon tasks
     for task in due_soon:
@@ -221,7 +227,7 @@ def notifier(overdue, due_soon):
                 messages.append(msg)
                 sent_log[f"{task_id}_reminder"] = datetime.now(timezone.utc).isoformat()
         except (KeyError, ValueError) as e:
-            print(f"Error processing due soon task: {str(e)}")
+            print(f"[ERROR] - Error processing due soon task: {str(e)}")
 
     # Send to Twitter/X
     for msg in messages:
@@ -236,14 +242,14 @@ def notifier(overdue, due_soon):
 
 if __name__ == "__main__":
     try:
-        print("=== Starting Punisher ===")
+        print("=== Starting T-Manager ===")
         print(f"Current time: {datetime.now(timezone.utc).isoformat()}")
         
      # Get all active tasks
         tasks = get_tasks()
         
         if tasks is None:
-            print("Critical error fetching tasks. Exiting.")
+            print("[ERROR] - Critical error fetching tasks. Exiting.")
             sys.exit(1)
 
      # Sort all active tasks into those which are overdue OR due soon        

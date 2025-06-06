@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime, timedelta
+import zoneinfo
 from supabase import Client, create_client
 from pathlib import Path
 from dotenv import load_dotenv
