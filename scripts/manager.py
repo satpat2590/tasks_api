@@ -19,6 +19,7 @@ def get_points():
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"token {GITHUB_TOKEN}"}
     )
+    print(res.json())
     content = res.json()['files']['points.json']['content']
     print(f"Printing out the content from Github Gist:\n")
     json_content = json.loads(content)
