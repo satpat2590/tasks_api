@@ -21,12 +21,16 @@ def get_points():
     )
     content = res.json()['files']['points.json']['content']
     print(f"Printing out the content from Github Gist:\n")
-    print(content)
     json_content = json.loads(content)
     if not json_content:
         print(f"The JSON object returned from GH Gist is empty. Setting up template now...")
         json_content["total"] = 0
-        json_content["categories"] = {}
+        json_content["categories"] = {
+            'mental': 0,
+            'physical': 0,
+            'social': 0,
+            'financial': 0
+        }
         json_content["last_deductions"] = {}
         json_content["history"] = []
         print(f"Created JSON. Analyzing tasks now...")
@@ -76,18 +80,17 @@ def penalize_overdue(task, points_data):
     penalty = task['priority'] * 5
     category = task['category']
     
-    # Update totals
+ # Update totals and category specific points trackers
     points_data['total'] -= penalty
-    if points_data["categories"].get(category, None):
-        points_data['categories'][category] -= penalty
-    else:
-        points_data["categories"][category] = 0 
+    points_data["categories"][category] -= penalty
+
+    print(f"Category '{category}' is now at {points_data['categories'][category]} points")
     
-    # Mark as deducted
+ # Mark as deducted
     key = f"{task['id']}_{task['due_date'][:10]}"
     points_data['last_deductions'][key] = datetime.now(EASTERN_TZ).isoformat()
     
-    # Log it
+ # Log it
     points_data['history'].append({
         "task_id": task['id'],
         "task": task['title'],
@@ -97,7 +100,7 @@ def penalize_overdue(task, points_data):
         "date": datetime.now(EASTERN_TZ).isoformat()
     })
     
-    # Trim history to last 100
+ # Trim history to last 100
     points_data['history'] = points_data['history'][-100:]
     
     return penalty
@@ -144,7 +147,8 @@ def sort_tasks(tasks):
         try:
             # Handle date formatting safely
             due_date = task['due_date'].replace('Z', '+00:00')
-            due = datetime.fromisoformat(due_date)
+            due_raw = datetime.fromisoformat(due_date)
+            due = due_raw.astimezone(EASTERN_TZ)
             print(f"'{task['title']}' - Due at {due}\n")
             diff = due - now
             
@@ -242,7 +246,7 @@ def notifier(overdue, due_soon):
 
 if __name__ == "__main__":
     try:
-        print("=== Starting T-Manager ===")
+        print("=== Starting 'Notifier' ===")
         
      # Get all active tasks
         tasks = get_tasks()
@@ -260,12 +264,13 @@ if __name__ == "__main__":
      # Send out notifications to alert you of impending tasks
         sent_count = notifier(overdue, due_soon)
         print(f"Sent {sent_count} notifications\n")
+        print("=== Completed ===")
+        print("=== Starting 'Game State Updater' ===")
 
      # Update the points system
         point_sys = get_points()
         for task in overdue:
             penalty = penalize_overdue(task, point_sys)
-            print(f"{task['title']} is overdue! Deducting {penalty} points from {task['category']}...\n")
         save_points(point_sys)
         
         print("=== Completed ===")
