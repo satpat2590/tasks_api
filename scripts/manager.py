@@ -243,7 +243,6 @@ def notifier(overdue, due_soon):
 if __name__ == "__main__":
     try:
         print("=== Starting T-Manager ===")
-        print(f"Current time: {datetime.now(timezone.utc).isoformat()}")
         
      # Get all active tasks
         tasks = get_tasks()

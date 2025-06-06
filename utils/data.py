@@ -14,7 +14,7 @@ class TaskCreate(BaseModel):
     is_recurring: bool = False
     recurrence_pattern: Optional[str] = None
 
-    @field_validator('due_date', pre=True)
+    @field_validator('due_date')
     @classmethod
     def ensure_timezone(cls, v):
         if v and isinstance(v, datetime) and v.tzinfo is None:
@@ -46,7 +46,7 @@ class TaskUpdate(BaseModel):
     recurrence_pattern: Optional[str] = None
     is_active: Optional[bool] = None
 
-    @field_validator('due_date', pre=True)
+    @field_validator('due_date')
     @classmethod
     def ensure_timezone(cls, v):
         if v and isinstance(v, datetime) and v.tzinfo is None:
