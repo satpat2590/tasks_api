@@ -5,13 +5,14 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import zoneinfo
 from supabase import Client, create_client
 from pathlib import Path
 from dotenv import load_dotenv
 from utils.auth import verify_credentials
 from utils.data import TaskCreate, TaskResponse, TaskUpdate
+from scripts.game_tracker import get_points, save_points, calculate_points
 
 # Load in the .env file so you can use your env variables
 #currdir = Path(__file__).resolve().parent
@@ -128,13 +129,17 @@ async def update_task(task_id: int, task: TaskUpdate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.patch("/api/tasks/disable/{task_id}")
-async def disable_task(task_id: int):
-    """
-    Disable task - if recurring, advance due_date; if not, set is_active to False
 
-    :request: None
-    :response: Message verifying that task was completed
+@app.patch("/api/tasks/disable/{task_id}")
+async def disable_task(task_id: int, completion_data: Optional[dict] = None):
+    """
+    Complete task - log completion and handle recurring tasks
+    
+    Optional body:
+    {
+        "quality": 1-5,
+        "notes": "string"
+    }
     """
     try:
      # Get the task first
@@ -144,14 +149,63 @@ async def disable_task(task_id: int):
         
         task_data = task.data[0]
         
-     # If not recurring, just disable it
+###### Log the completion in the task_completion table
+        completion_record = {
+            "task_id": task_id,
+            "completion_quality": completion_data.get("quality", 3) if completion_data else 3,
+            "notes": completion_data.get("notes", "") if completion_data else "",
+            "was_late": False  # Calculate if needed based on due_date
+        }
+        
+     # Check if task was completed late
+        if task_data['due_date']:
+            due = datetime.fromisoformat(task_data['due_date'].replace('Z', '+00:00'))
+            if datetime.now(timezone.utc) > due:
+                completion_record["was_late"] = True
+     
+     # Insert the completed task into the task_completion table
+        supabase.table('task_completions').insert(completion_record).execute()
+        
+###### Award points
+        points_data = get_points()
+        base_points = task_data['priority'] * 10
+        
+     # Apply recurring point deduction
+        if task_data['is_recurring'] and 'daily' in task_data.get('recurrence_pattern', '').lower():
+            base_points = int(base_points * 0.3)
+        
+     # Apply quality bonus/penalty
+        quality = completion_record["completion_quality"]
+        if quality >= 4:
+            base_points = int(base_points * 1.2)  # 20% bonus
+        elif quality <= 2:
+            base_points = int(base_points * 0.8)  # 20% penalty
+        
+     # Update points
+        points_data['total'] += base_points
+        points_data['categories'][task_data['category']] += base_points
+        points_data['history'].append({
+            "task_id": task_id,
+            "task": task_data['title'],
+            "category": task_data['category'],
+            "points": base_points,
+            "type": "completed",
+            "quality": quality,
+            "date": datetime.now(timezone.utc).isoformat()
+        })
+     
+        save_points(points_data)
+        
+###### Set the task in the table to inactive / update due date if recurrent
+
+     # Handle recurring vs non-recurring
         if not task_data['is_recurring']:
             response = supabase.table('tasks').update({
                 "is_active": False
             }).eq('id', task_id).execute()
-            return {"message": "Task disabled"}
+            return {"message": f"Task completed! +{base_points} points", "points_earned": base_points}
         
-     # If recurring, calculate next due date
+     # If recurring, calculate next due date (existing logic)
         current_due = datetime.fromisoformat(task_data['due_date'].replace('Z', '+00:00'))
         pattern = task_data['recurrence_pattern'].lower()
         
@@ -161,15 +215,12 @@ async def disable_task(task_id: int):
         elif pattern == 'weekly':
             next_due = current_due + timedelta(weeks=1)
         elif pattern == 'monthly':
-         # Handle month boundaries properly
             if current_due.month == 12:
                 next_due = current_due.replace(year=current_due.year + 1, month=1)
             else:
                 next_due = current_due.replace(month=current_due.month + 1)
         elif pattern == 'yearly':
             next_due = current_due.replace(year=current_due.year + 1)
-        elif pattern == 'quad-monthly':
-            next_due = current_due + timedelta(weeks=4)
         else:
          # Try to parse custom patterns like "every 3 days"
             match = re.match(r'every (\d+) days?', pattern)
@@ -177,7 +228,6 @@ async def disable_task(task_id: int):
                 days = int(match.group(1))
                 next_due = current_due + timedelta(days=days)
             else:
-             # Default to weekly if pattern unrecognized
                 next_due = current_due + timedelta(weeks=1)
         
      # Update the due date
@@ -185,7 +235,11 @@ async def disable_task(task_id: int):
             "due_date": next_due.isoformat()
         }).eq('id', task_id).execute()
         
-        return {"message": f"Recurring task advanced to {next_due.date()}"}
+        return {
+            "message": f"Recurring task completed! +{base_points} points. Next due: {next_due.date()}", 
+            "points_earned": base_points,
+            "next_due": next_due.isoformat()
+        }
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
