@@ -17,7 +17,7 @@ def get_tasks():
     """Get active tasks from API with error handling"""
     try:
         print(f"Requesting tasks from: {WEB_SERVER_API}/api/tasks")
-        res = requests.get(f"{WEB_SERVER_API}/api/tasks", timeout=70)
+        res = requests.get(f"{WEB_SERVER_API}/api/tasks", timeout=100)
         print(f"API response status: {res.status_code}")
         
         # Check for successful response

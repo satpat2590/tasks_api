@@ -53,3 +53,21 @@ class TaskUpdate(BaseModel):
             eastern = zoneinfo.ZoneInfo("America/New_York")
             return v.replace(tzinfo=eastern)
         return v
+    
+
+######## Data definition for the /completed tasks endpoints retrieving all finished tasks
+
+class CompletionData(BaseModel):
+    notes: Optional[str] = ""
+
+class CompletionResponse(BaseModel):
+    id: int
+    task_id: int
+    task_title: str
+    task_category: str
+    completed_at: datetime
+    notes: Optional[str]
+    was_late: bool
+
+class CompletionUpdate(BaseModel):
+    notes: str

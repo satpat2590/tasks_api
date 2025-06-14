@@ -11,7 +11,7 @@ from supabase import Client, create_client
 from pathlib import Path
 from dotenv import load_dotenv
 from utils.auth import verify_credentials
-from utils.data import TaskCreate, TaskResponse, TaskUpdate
+from utils.data import TaskCreate, TaskResponse, TaskUpdate, CompletionData, CompletionResponse, CompletionUpdate
 from scripts.game_tracker import get_points, save_points, calculate_points
 
 # Load in the .env file so you can use your env variables
@@ -36,7 +36,7 @@ app.add_middleware(
 )
 
 
-######## Endpoint implementation for our lovely web server API
+######## Endpoint implementation for our lovely web server API ###########
 @app.get("/")
 def read_root():
     return {"message": "We WAZ KANGZZZZ!!!!! (Indo-Aryan Edition)"}
@@ -49,6 +49,8 @@ async def head_root():
     """
     return  # Returning nothing (or an empty string) is sufficient for HEAD
 
+
+####################### /api/tasks
 @app.get("/api/tasks", response_model=List[TaskResponse])
 async def get_active_tasks():
     """
@@ -269,3 +271,40 @@ async def hard_delete_task(task_id: int):
         return {"message": "Task and all related records permanently deleted"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
+
+####################### /api/completed
+
+@app.get("/api/completed", response_model=List[CompletionResponse])
+async def get_completed_tasks(limit: int = 50, offset: int = 0):
+    """Get completed tasks with task details"""
+    response = supabase.table('task_completions').select(
+        "*, tasks(title, category)"
+    ).order('completed_at', desc=True).range(offset, offset + limit - 1).execute()
+    
+    # Transform the response
+    completions = []
+    for item in response.data:
+        completions.append({
+            "id": item['id'],
+            "task_id": item['task_id'],
+            "task_title": item['tasks']['title'],
+            "task_category": item['tasks']['category'],
+            "completed_at": item['completed_at'],
+            "notes": item['notes'],
+            "was_late": item['was_late']
+        })
+    
+    return completions
+
+@app.patch("/api/completed/{completion_id}")
+async def update_completion_notes(completion_id: int, update: CompletionUpdate):
+    """Update notes for a completed task"""
+    response = supabase.table('task_completions').update({
+        "notes": update.notes
+    }).eq('id', completion_id).execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Completion not found")
+    
+    return {"message": "Notes updated"}
