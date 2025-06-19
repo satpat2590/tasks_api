@@ -133,7 +133,7 @@ async def update_task(task_id: int, task: TaskUpdate):
 
 
 @app.patch("/api/tasks/disable/{task_id}")
-async def disable_task(task_id: int, completion_data: Optional[dict] = None):
+async def disable_task(task_id: int, completion_data: Optional[CompletionData] = None):
     """
     Complete task - log completion and handle recurring tasks
     

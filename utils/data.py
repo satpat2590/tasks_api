@@ -59,6 +59,7 @@ class TaskUpdate(BaseModel):
 
 class CompletionData(BaseModel):
     notes: Optional[str] = ""
+    quality: Optional[int] = 3
 
 class CompletionResponse(BaseModel):
     id: int
