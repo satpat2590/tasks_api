@@ -154,8 +154,8 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
 ###### Log the completion in the task_completion table
         completion_record = {
             "task_id": task_id,
-            "completion_quality": completion_data.get("quality", 3) if completion_data else 3,
-            "notes": completion_data.get("notes", "") if completion_data else "",
+            "completion_quality": completion_data.quality if completion_data.quality else 3,
+            "notes": completion_data.notes if completion_data.notes else "",
             "was_late": False  # Calculate if needed based on due_date
         }
         
