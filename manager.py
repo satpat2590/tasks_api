@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 import zoneinfo
 from pathlib import Path
-from .game_tracker import get_points, save_points, penalize_overdue
+from scripts.game_tracker import get_points, save_points, penalize_overdue
 
 # Configuration
 WEB_SERVER_API = "https://tasks-api-71v5.onrender.com"
