@@ -18,7 +18,7 @@ jobs:
 
       - run: mkdir -p data
 
-      - run: python scripts/manager.py
+      - run: python manager.py
         env:
           GH_GIST_ID: ${{ secrets.GH_GIST_ID }}
           GH_GIST_PAT: ${{ secrets.GH_GIST_PAT }}
