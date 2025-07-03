@@ -1,7 +1,7 @@
 name: Task Manager
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -23,10 +23,10 @@ jobs:
           GH_GIST_ID: ${{ secrets.GH_GIST_ID }}
           GH_GIST_PAT: ${{ secrets.GH_GIST_PAT }}
 
-      - name: Check if points.json exists
-        run: ls -la data/points.json || echo "File not found"
+      - name: Check if sent.json exists
+        run: ls -la data/sent.json || echo "File not found"
 
       - uses: actions/upload-artifact@v4
         with:
           name: point-log
-          path: data/points.json
+          path: data/sent.json
