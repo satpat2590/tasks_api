@@ -12,13 +12,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from utils.auth import verify_credentials
 from utils.data import TaskCreate, TaskResponse, TaskUpdate, CompletionData, CompletionResponse, CompletionUpdate
+from utils.tags import build_hierarchy_string, ensure_tag_exists, auto_tag_task, get_tag_by_id, get_tag_path
 from scripts.game_tracker import get_points, save_points, calculate_points
+from anthropic import Anthropic
 
-# Load in the .env file so you can use your env variables
-#currdir = Path(__file__).resolve().parent
-#envpath = currdir / '.env'
-
-# Set up the FastAPI backend. Use uvicorn as your web server (preferably).
+# Set up the FastAPI backend. Use uvicorn as your web server (preferably)
 app = FastAPI()
 
 # Make the connection to Supabase instance
@@ -47,10 +45,9 @@ async def head_root():
     Handles HEAD requests for the root path.
     This is often used for health checks.
     """
-    return  # Returning nothing (or an empty string) is sufficient for HEAD
+    return  # Returning nothing (or an empty string) is sufficient for HEAD (exquisite dome)
 
 
-####################### /api/tasks
 @app.get("/api/tasks", response_model=List[TaskResponse])
 async def get_active_tasks():
     """
@@ -84,7 +81,20 @@ async def create_task(task: TaskCreate):
             "is_recurring": task.is_recurring,
             "recurrence_pattern": task.recurrence_pattern
         }).execute()
+
+     # Retrieve task ID to place within task_tags table    
+        task_id = response.data[0]['id']
+
+     # Auto-tag with AI
+        tags = await auto_tag_task(response.data[0])
         
+     # Insert task-tag relationships
+        for tag_id in tags:
+            supabase.table('task_tags').insert({
+                'task_id': task_id,
+                'tag_id': tag_id
+            }).execute()
+
         return response.data[0]
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -137,7 +147,7 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
     """
     Complete task - log completion and handle recurring tasks
     
-    Optional body:
+    Optional request body:
     {
         "quality": 1-5,
         "notes": "string"
@@ -170,6 +180,11 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
      
      # Insert the completed task into the task_completion table
         supabase.table('task_completions').insert(completion_record).execute()
+
+     # Get task with its tags
+        task_tags = supabase.table('task_tags').select(
+            "tag_id, tags(*)"
+        ).eq('task_id', task_id).execute()
         
 ###### Award points
         points_data = get_points()
@@ -189,6 +204,24 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
      # Update points
         points_data['total'] += base_points
         points_data['categories'][task_data['category']] += base_points
+      # Update tag points
+        if 'tag_points' not in points_data:
+            points_data['tag_points'] = {}
+        
+        for task_tag in task_tags.data:
+            tag = task_tag['tags'] 
+
+            current_tag_id = tag['id']
+            while current_tag_id:
+                tag_info = get_tag_by_id(current_tag_id)
+                tag_path = get_tag_path(current_tag_id)
+
+                if tag_path not in points_data['tag_points']:
+                    points_data['tag_points'][tag_path] = 0
+                
+                points_data['tag_points'][tag_path] += base_points 
+                current_tag_id = tag_info.get('parent_tag_id')
+
         points_data['history'].append({
             "task_id": task_id,
             "task": task_data['title'],
