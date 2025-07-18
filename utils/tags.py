@@ -1,6 +1,7 @@
 import os, json, re
 from supabase import Client, create_client
 from anthropic import Anthropic
+from typing import List
 
 # Make the connection to Supabase instance
 supabase: Client = create_client(
@@ -55,7 +56,7 @@ def build_hierarchy_string(tags):
 
 
 
-def auto_tag_task(task_data):
+async def auto_tag_task(task_data) -> List[str]:
     client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     
     # Get existing tags for context
@@ -63,22 +64,23 @@ def auto_tag_task(task_data):
     tags_hierarchy = build_hierarchy_string(existing_tags)
     
     prompt = f"""
-    Task: "{task_data['title']}"
-    Description: "{task_data.get('description', '')}"
-    Category: {task_data['category']}
-    
-    Current tag hierarchy:
-    {tags_hierarchy}
-    
-    Suggest 1-3 specific tags for this task. Return as JSON array of tag paths.
-    If tags don't exist, suggest new ones following the hierarchy pattern.
-    Be specific - use the deepest appropriate level.
-    
-    Example response: ["Computer Science/Web Development/Frontend Development/React Components"]
+        Task: "{task_data['title']}"
+        Description: "{task_data.get('description', '')}"
+        Category: {task_data['category']}
+        
+        Current tag hierarchy:
+        {tags_hierarchy}
+        
+        Suggest specific tags for this task. Return as JSON array of tag paths.
+        If tags don't exist, suggest new ones following the hierarchy pattern.
+        Be specific - use the deepest appropriate level. Please don't include the {{Category}} into the list of tags.
+        
+        Example response: ["Computer Science/Web Development/Frontend Development/React Components"]
+        ["Computer Science/Web Development/Backend Development/Express]
     """
-    
+ # What say you, Mr. Claude?
     response = client.messages.create(
-        model="claude-3-5-sonnet-20241022",  # Fast & cheap
+        model="claude-sonnet-4-20250514",  # Fast & cheap
         max_tokens=200,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -86,47 +88,63 @@ def auto_tag_task(task_data):
     response_text = response.content[0].text 
     json_match = re.search(r'\[.*?\]', response_text, re.DOTALL)
 
+ # If there exists a response from the AI which matches the regex (sub-topics in list format)
     if json_match:
         suggested_paths = json.loads(json_match.group())
     else:
-        suggested_paths = []
-     
-    # Parse AI response and create/match tags
+        return []
+
+ # Parse AI response and create/match tags
     print(suggested_paths)
     tag_ids = []
-    
+
+ # For each sub-topic in the list, ensure it exists in the DB, create if not
     for path in suggested_paths:
+        print(f"\n\nAnalyzing the following sub-topic: {path}")
         tag_id = ensure_tag_exists(path, task_data['category'])
-        tag_ids.append(tag_id)
+        tag_ids.append(tag_id) 
     
     return tag_ids
 
 def ensure_tag_exists(path, category):
     """Create tag hierarchy if it doesn't exist"""
     parts = path.split('/')
-    parent_id = 0
+    parent_id = None  # Use None for root tags, not 0
     
     for i, part in enumerate(parts):
-        # Check if tag exists
-        print(f"Checking if {part} exists within the tags table...")
-        existing = supabase.table('tags').select("*").eq(
-            'name', part
-        ).eq('parent_tag_id', parent_id).execute()
+        # Check if tag exists with this specific parent
+        print(f"\nChecking if '{part}' exists with parent_id={parent_id}...")
+        
+        if parent_id is None:
+            # Root level tag
+            existing = supabase.table('tags').select("*").eq(
+                'name', part
+            ).is_('parent_tag_id', 'null').eq(
+                'category', category
+            ).execute()
+        else:
+            # Child tag
+            existing = supabase.table('tags').select("*").eq(
+                'name', part
+            ).eq('parent_tag_id', parent_id).execute()
         
         if existing.data:
-            print(f"{part} exists! Setting as parent_id...\n")
+            print(f"\n'{part}' exists! Using id={existing.data[0]['id']}")
             parent_id = existing.data[0]['id']
         else:
-            print(f"{part} does not exist. Creating now...\n")
+            print(f"\n'{part}' doesn't exist. Creating with parent_id={parent_id}")
             # Create new tag
             new_tag = supabase.table('tags').insert({
                 'name': part,
-                'parent_tag_id': parent_id,
+                'parent_tag_id': parent_id,  # None for root, or parent's ID
                 'category': category
             }).execute()
             parent_id = new_tag.data[0]['id']
+            print(f"\nCreated '{part}' with id={parent_id}")
     
+    # Return the leaf tag ID
     return parent_id
+
 
 def get_tag_by_id(tag_id):
     tag = supabase.table('tags').select("*").eq(
@@ -152,6 +170,7 @@ def get_tag_path(tag_id):
         current_tag_id = tag.get('parent_tag_id')
     
     return "/".join(path_parts)
+
 
 
 if __name__=="__main__":

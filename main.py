@@ -87,6 +87,8 @@ async def create_task(task: TaskCreate):
 
      # Auto-tag with AI
         tags = await auto_tag_task(response.data[0])
+
+        print("\nThe list of leaf-node tag IDs:", tags)
         
      # Insert task-tag relationships
         for tag_id in tags:
@@ -173,10 +175,12 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
         }
         
      # Check if task was completed late
+        late = 0
         if task_data['due_date']:
             due = datetime.fromisoformat(task_data['due_date'].replace('Z', '+00:00'))
             if datetime.now(timezone.utc) > due:
                 completion_record["was_late"] = True
+                late = 1
      
      # Insert the completed task into the task_completion table
         supabase.table('task_completions').insert(completion_record).execute()
@@ -186,53 +190,54 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
             "tag_id, tags(*)"
         ).eq('task_id', task_id).execute()
         
-###### Award points
-        points_data = get_points()
-        base_points = task_data['priority'] * 10
-        
-     # Apply recurring point deduction
-        if task_data['is_recurring'] and 'daily' in task_data.get('recurrence_pattern', '').lower():
-            base_points = int(base_points * 0.3)
-        
-     # Apply quality bonus/penalty
-        quality = completion_record["completion_quality"]
-        if quality >= 4:
-            base_points = int(base_points * 1.2)  # 20% bonus
-        elif quality <= 2:
-            base_points = int(base_points * 0.8)  # 20% penalty
-        
-     # Update points
-        points_data['total'] += base_points
-        points_data['categories'][task_data['category']] += base_points
-      # Update tag points
-        if 'tag_points' not in points_data:
-            points_data['tag_points'] = {}
-        
-        for task_tag in task_tags.data:
-            tag = task_tag['tags'] 
+###### Award points IF task was NOT finished late
+        if late:
+            points_data = get_points()
+            base_points = task_data['priority'] * 10
+            
+         # Apply recurring point deduction
+            if task_data['is_recurring'] and 'daily' in task_data.get('recurrence_pattern', '').lower():
+                base_points = int(base_points * 0.3)
+            
+         # Apply quality bonus/penalty
+            quality = completion_record["completion_quality"]
+            if quality >= 4:
+                base_points = int(base_points * 1.2)  # 20% bonus
+            elif quality <= 2:
+                base_points = int(base_points * 0.8)  # 20% penalty
+            
+         # Update points
+            points_data['total'] += base_points
+            points_data['categories'][task_data['category']] += base_points
+         # Update tag points
+            if 'tag_points' not in points_data:
+                points_data['tag_points'] = {}
+            
+            for task_tag in task_tags.data:
+                tag = task_tag['tags'] 
 
-            current_tag_id = tag['id']
-            while current_tag_id:
-                tag_info = get_tag_by_id(current_tag_id)
-                tag_path = get_tag_path(current_tag_id)
+                current_tag_id = tag['id']
+                while current_tag_id:
+                    tag_info = get_tag_by_id(current_tag_id)
+                    tag_path = get_tag_path(current_tag_id)
 
-                if tag_path not in points_data['tag_points']:
-                    points_data['tag_points'][tag_path] = 0
-                
-                points_data['tag_points'][tag_path] += base_points 
-                current_tag_id = tag_info.get('parent_tag_id')
+                    if tag_path not in points_data['tag_points']:
+                        points_data['tag_points'][tag_path] = 0
+                    
+                    points_data['tag_points'][tag_path] += base_points 
+                    current_tag_id = tag_info.get('parent_tag_id')
 
-        points_data['history'].append({
-            "task_id": task_id,
-            "task": task_data['title'],
-            "category": task_data['category'],
-            "points": base_points,
-            "type": "completed",
-            "quality": quality,
-            "date": datetime.now(timezone.utc).isoformat()
-        })
-     
-        save_points(points_data)
+            points_data['history'].append({
+                "task_id": task_id,
+                "task": task_data['title'],
+                "category": task_data['category'],
+                "points": base_points,
+                "type": "completed",
+                "quality": quality,
+                "date": datetime.now(timezone.utc).isoformat()
+            })
+        
+            save_points(points_data)
         
 ###### Set the task in the table to inactive / update due date if recurrent
 
