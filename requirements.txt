@@ -18,3 +18,4 @@ typing_extensions==4.13.2
 uvicorn==0.34.2
 supabase==2.15.2
 requests==2.32.2
+anthropic==0.57.1
