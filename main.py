@@ -305,6 +305,7 @@ async def hard_delete_task(task_id: int):
      # Delete dependent records first (optional)
         supabase.table('notifications').delete().eq('task_id', task_id).execute()
         supabase.table('task_completions').delete().eq('task_id', task_id).execute()
+        supabase.table('task_tags').delete().eq('task_id', task_id).execute()
 
      # Finally, delete the task
         supabase.table('tasks').delete().eq('id', task_id).execute()
