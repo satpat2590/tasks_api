@@ -190,8 +190,10 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
             "tag_id, tags(*)"
         ).eq('task_id', task_id).execute()
         
+     # Setting the base points to 0 initially and change IF task is not overdue
+        base_points = 0 
 ###### Award points IF task was NOT finished late
-        if late:
+        if not late:
             points_data = get_points()
             base_points = task_data['priority'] * 10
             
