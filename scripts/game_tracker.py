@@ -31,8 +31,8 @@ def get_points():
         json_content["history"] = []
         print(f"Created JSON. Analyzing tasks now...")
     else:
-        print(f"\nPoint History: ")
-        print(json_content["history"])
+        print(f"\nNumber of tasks completed: ")
+        print(len(json_content["history"]))
 
     return json_content
 

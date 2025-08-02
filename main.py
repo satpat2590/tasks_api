@@ -358,35 +358,35 @@ async def update_completion_notes(completion_id: int, update: CompletionUpdate):
 @app.get("/api/skill-tree")
 async def get_skill_tree():
     """Get hierarchical skill tree with points"""
-    # Get all tags
+ # Get all tags
     tags_response = supabase.table('tags').select("*").execute()
     tags = tags_response.data
     
-    # Get points data from GitHub Gist
+ # Get points data from GitHub Gist
     points_data = get_points()
     
-    # Get completed task counts per tag
-    # First, get all completed tasks with their tags
+ # Get completed task counts per tag
+  # First, get all completed tasks with their tags
     task_counts = {}
     
-    # Get all task completions
+  # Get all task completions
     completions = supabase.table('task_completions').select("task_id").execute()
     
     for completion in completions.data:
-        # Get tags for this completed task
+     # Get tags for this completed task
         task_tags = supabase.table('task_tags').select("tag_id").eq(
             'task_id', completion['task_id']
         ).execute()
         
-        # Count completion for each tag
+     # Count completion for each tag
         for task_tag in task_tags.data:
             tag_id = task_tag['tag_id']
             tag_path = get_tag_path(tag_id)
             task_counts[tag_path] = task_counts.get(tag_path, 0) + 1
     
-    # Build tree structure
+ # Build tree structure
     def build_tree():
-        # Start with root
+     # Start with root
         root = {
             "name": "All Skills",
             "points": points_data.get('total', 0),
@@ -394,7 +394,7 @@ async def get_skill_tree():
             "children": []
         }
         
-        # Add categories
+     # Add categories
         for category in ['mental', 'physical', 'social', 'financial']:
             category_node = {
                 "name": category.title(),
@@ -404,13 +404,13 @@ async def get_skill_tree():
                 "children": []
             }
             
-            # Find root tags for this category
+         # Find root tags for this category
             root_tags = [t for t in tags if t['category'] == category and t['parent_tag_id'] is None]
             
             for tag in root_tags:
                 tag_node = build_tag_node(tag, tags)
                 category_node["children"].append(tag_node)
-                # Sum up completed tasks for category
+             # Sum up completed tasks for category
                 category_node["completed_tasks"] += tag_node["completed_tasks"]
             
             root["children"].append(category_node)
@@ -429,12 +429,12 @@ async def get_skill_tree():
             "children": []
         }
         
-        # Find children
+     # Find children
         children = [t for t in all_tags if t['parent_tag_id'] == tag['id']]
         for child in children:
             child_node = build_tag_node(child, all_tags)
             node["children"].append(child_node)
-            # Add child's completed tasks to parent
+         # Add child's completed tasks to parent
             node["completed_tasks"] += child_node["completed_tasks"]
         
         return node
