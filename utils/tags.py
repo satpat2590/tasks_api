@@ -57,10 +57,16 @@ def build_hierarchy_string(tags):
 
 
 async def auto_tag_task(task_data) -> List[str]:
+    """
+    Given an input task, figure out what tags should be associated with it, and return it as a List of strings where each entry is a tag in hierarchical order
+
+    :param task_data: The task which is to be created by the backend
+    :return tag_list: The list of tags in hierarchial order
+    """
     client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     
-    # Get existing tags for context
-    existing_tags = supabase.table('tags').select("*").execute().data
+ # Get existing tags for context
+    existing_tags = supabase.table('tags').select("*").eq('category', task_data['category']).execute().data
     tags_hierarchy = build_hierarchy_string(existing_tags)
     
     prompt = f"""
@@ -75,8 +81,7 @@ async def auto_tag_task(task_data) -> List[str]:
         If tags don't exist, suggest new ones following the hierarchy pattern.
         Be specific - use the deepest appropriate level. Please don't include the {{Category}} into the list of tags.
         
-        Example response: ["Computer Science/Web Development/Frontend Development/React Components"]
-        ["Computer Science/Web Development/Backend Development/Express]
+        Example response: ["Computer Science/Web Development/Frontend Development/React Components"], ["Computer Science/Web Development/Frontend Development/Vite"]
     """
  # What say you, Mr. Claude?
     response = client.messages.create(

@@ -37,7 +37,7 @@ app.add_middleware(
 ######## Endpoint implementation for our lovely web server API ###########
 @app.get("/")
 def read_root():
-    return {"message": "We WAZ KANGZZZZ!!!!! (Indo-Aryan Edition)"}
+    return {"message": "Infinite Domain: Satyam's Call Center"}
 
 @app.head("/")
 async def head_root():
@@ -171,19 +171,23 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
             "task_id": task_id,
             "completion_quality": quality_score,
             "notes": notes,
-            "was_late": False  # Calculate if needed based on due_date
+            "was_late": False,  # Calculate if needed based on due_date
+            "time_spent_minutes": None,
+            "points": 0
         }
         
      # Check if task was completed late
         late = 0
         if task_data['due_date']:
+         # Was the task completed late? 
             due = datetime.fromisoformat(task_data['due_date'].replace('Z', '+00:00'))
             if datetime.now(timezone.utc) > due:
                 completion_record["was_late"] = True
                 late = 1
-     
-     # Insert the completed task into the task_completion table
-        supabase.table('task_completions').insert(completion_record).execute()
+
+         # Get the time spent on the task in minutes
+            passed_time = datetime.now(timezone.utc) - due
+            completion_record["time_spent_minutes"] = int(passed_time.total_seconds() // 60)
 
      # Get task with its tags
         task_tags = supabase.table('task_tags').select(
@@ -191,56 +195,32 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
         ).eq('task_id', task_id).execute()
         
      # Setting the base points to 0 initially and change IF task is not overdue
-        base_points = 0 
-###### Award points IF task was NOT finished late
-        if not late:
-            points_data = get_points()
-            base_points = task_data['priority'] * 10
-            
-         # Apply recurring point deduction
-            if task_data['is_recurring'] and 'daily' in task_data.get('recurrence_pattern', '').lower():
-                base_points = int(base_points * 0.3)
-            
-         # Apply quality bonus/penalty
-            quality = completion_record["completion_quality"]
-            if quality >= 4:
-                base_points = int(base_points * 1.2)  # 20% bonus
-            elif quality <= 2:
-                base_points = int(base_points * 0.8)  # 20% penalty
-            
-         # Update points
-            points_data['total'] += base_points
-            points_data['categories'][task_data['category']] += base_points
-         # Update tag points
-            if 'tag_points' not in points_data:
-                points_data['tag_points'] = {}
-            
-            for task_tag in task_tags.data:
-                tag = task_tag['tags'] 
-
-                current_tag_id = tag['id']
-                while current_tag_id:
-                    tag_info = get_tag_by_id(current_tag_id)
-                    tag_path = get_tag_path(current_tag_id)
-
-                    if tag_path not in points_data['tag_points']:
-                        points_data['tag_points'][tag_path] = 0
-                    
-                    points_data['tag_points'][tag_path] += base_points 
-                    current_tag_id = tag_info.get('parent_tag_id')
-
-            points_data['history'].append({
-                "task_id": task_id,
-                "task": task_data['title'],
-                "category": task_data['category'],
-                "points": base_points,
-                "type": "completed",
-                "quality": quality,
-                "date": datetime.now(timezone.utc).isoformat()
-            })
+        base_points = 0
         
-            save_points(points_data)
+###### Figure out how many points this task will grant overall
+        base_points = task_data['priority'] * 10
+            
+     # Apply recurring point deduction
+        if task_data['is_recurring'] and 'daily' in task_data.get('recurrence_pattern', '').lower():
+            base_points = int(base_points * 0.3)
+            
+     # Apply quality bonus/penalty
+        quality = completion_record["completion_quality"]
+        if quality >= 4:
+            base_points = int(base_points * 1.2)  # 20% bonus
+        elif quality <= 2:
+            base_points = int(base_points * 0.8)  # 20% penalty
+
+     # Flip the signage of the points to reflect the deduction amount if task was late
+        if late:
+            base_points = -base_points 
         
+     # Add base points to the completion record prior to adding to table
+        completion_record["points"] = base_points
+
+     # Insert the completed task into the task_completion table
+        supabase.table('task_completions').insert(completion_record).execute()
+
 ###### Set the task in the table to inactive / update due date if recurrent
 
      # Handle recurring vs non-recurring
@@ -248,7 +228,7 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
             response = supabase.table('tasks').update({
                 "is_active": False
             }).eq('id', task_id).execute()
-            return {"message": f"Task completed! +{base_points} points", "points_earned": base_points}
+            return {"message": f"Task completed! {base_points} points", "points_earned": base_points}
         
      # If recurring, calculate next due date (existing logic)
         current_due = datetime.fromisoformat(task_data['due_date'].replace('Z', '+00:00'))
@@ -281,7 +261,7 @@ async def disable_task(task_id: int, completion_data: Optional[CompletionData] =
         }).eq('id', task_id).execute()
         
         return {
-            "message": f"Recurring task completed! +{base_points} points. Next due: {next_due.date()}", 
+            "message": f"Recurring task completed! {base_points} points. Next due: {next_due.date()}", 
             "points_earned": base_points,
             "next_due": next_due.isoformat()
         }
@@ -336,7 +316,9 @@ async def get_completed_tasks(limit: int = 50, offset: int = 0):
             "task_category": item['tasks']['category'],
             "completed_at": item['completed_at'],
             "notes": item['notes'],
-            "was_late": item['was_late']
+            "was_late": item['was_late'],
+            "time_spent_minutes": item['time_spent_minutes'],
+            "points": item['points']
         })
     
     return completions
