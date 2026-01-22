@@ -36,6 +36,9 @@ class TaskResponse(BaseModel):
     needs_completion: Optional[bool] = None
     last_completed: Optional[datetime] = None
 
+class TaskRemainderResponse(TaskResponse):
+    time_remaining: Optional[int] = None
+
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None

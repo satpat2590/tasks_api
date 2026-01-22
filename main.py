@@ -1,4 +1,4 @@
-# main.py
+ # main.py
 import os, re
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
@@ -11,7 +11,7 @@ from supabase import Client, create_client
 from pathlib import Path
 from dotenv import load_dotenv
 from utils.auth import verify_credentials
-from utils.data import TaskCreate, TaskResponse, TaskUpdate, CompletionData, CompletionResponse, CompletionUpdate
+from utils.data import TaskCreate, TaskResponse, TaskUpdate, CompletionData, CompletionResponse, CompletionUpdate, TaskRemainderResponse
 from utils.tags import build_hierarchy_string, ensure_tag_exists, auto_tag_task, get_tag_by_id, get_tag_path
 from scripts.game_tracker import get_points, save_points, calculate_points
 from anthropic import Anthropic
@@ -59,6 +59,36 @@ async def get_active_tasks():
     response = supabase.table('tasks').select("*").eq('is_active', True).execute()
     return JSONResponse(
         content=response.data,
+        media_type="application/json",
+        headers={"Content-Type": "application/json; charset=utf-8"}
+    )
+
+@app.get("/api/tasks/remainder", response_model=List[TaskRemainderResponse])
+async def get_tasks_with_remainder():
+    """
+    Retrieve all active tasks with calculated time remaining in hours
+    """
+    response = supabase.table('tasks').select("*").eq('is_active', True).execute()
+    tasks = response.data
+    
+    now = datetime.now(timezone.utc)
+    
+    for task in tasks:
+        if task.get('due_date'):
+            try:
+                due_date = datetime.fromisoformat(task['due_date'].replace('Z', '+00:00'))
+                remainder = due_date - now
+                
+                # Convert remainder to total hours (can be negative if overdue)
+                hours_remaining = int(remainder.total_seconds() // 3600)
+                task['time_remaining'] = hours_remaining
+            except (ValueError, TypeError):
+                task['time_remaining'] = None
+        else:
+            task['time_remaining'] = None
+            
+    return JSONResponse(
+        content=tasks,
         media_type="application/json",
         headers={"Content-Type": "application/json; charset=utf-8"}
     )

@@ -1,5 +1,29 @@
 # tasks_api
-FastAPI project which will interface with Supabase to perform CRUD operations on a database which consists of various Tasks + other metadata
+
+A gamified task management system built with FastAPI and Supabase, designed to drive experiential growth and personal accountability.
+
+## Project Overview
+
+`tasks_api` is the backend for a comprehensive personal growth platform. It transforms standard task management into a game-like experience where users earn points for completing tasks and face "punishments" or aggressive notifications for falling behind.
+
+### Key Features
+
+- **Gamified Task Tracking**: Earn points based on task priority, recurrence, and completion quality.
+- **Skill Tree**: A hierarchical visualization of growth across mental, physical, social, and financial domains.
+- **AI-Powered Auto-Tagging**: Leverages the Anthropic API to automatically categorize and tag tasks into a complex hierarchy.
+- **Accountability System**: Monitors overdue tasks and triggers reminders or penalty-based notifications (e.g., via Twitter).
+- **Supabase Integration**: Robust data storage and real-time capabilities.
+- **Game of Life accountability script**: Periodically fetches active tasks and groups them based on the time remaining to send periodic aggressive notifications to notify you of your pending tasks.
+- **FastAPI Core**: High-performance, asynchronous REST API.
+
+### Technology Stack
+
+- **Framework**: FastAPI
+- **Database/Auth**: Supabase (PostgreSQL)
+- **AI/LLM**: Anthropic Claude API (for auto-tagging)
+- **Monitoring**: Integration with external services (e.g., OnRender, Twitter/X for notifications)
+
+---
 
 
 # Description
@@ -82,6 +106,11 @@ class TaskUpdate(BaseModel):
     is_active: Optional[bool] = None
 ```
 
+GET /api/tasks/remainder
+
+ - This endpoint will return a JSON list of active tasks with an additional `time_remaining` field (integer hours).
+ - Useful for grouping and sorting tasks by urgency.
+
 PATCH /api/tasks/disable/{task_id}
 
  - 
@@ -95,7 +124,7 @@ DELETE /api/tasks/{task_id}
 
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
-```sql
+
 CREATE TABLE public.notifications (
   id integer NOT NULL DEFAULT nextval('notifications_id_seq'::regclass),
   task_id integer,
@@ -105,7 +134,6 @@ CREATE TABLE public.notifications (
   CONSTRAINT notifications_pkey PRIMARY KEY (id),
   CONSTRAINT notifications_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id)
 );
-
 CREATE TABLE public.punishment_rules (
   id integer NOT NULL DEFAULT nextval('punishment_rules_id_seq'::regclass),
   hours_overdue integer NOT NULL UNIQUE,
@@ -113,7 +141,15 @@ CREATE TABLE public.punishment_rules (
   is_active boolean DEFAULT true,
   CONSTRAINT punishment_rules_pkey PRIMARY KEY (id)
 );
-
+CREATE TABLE public.tags (
+  id integer NOT NULL DEFAULT nextval('tags_id_seq'::regclass),
+  name character varying NOT NULL,
+  parent_tag_id integer,
+  category character varying NOT NULL,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT tags_pkey PRIMARY KEY (id),
+  CONSTRAINT tags_parent_tag_id_fkey FOREIGN KEY (parent_tag_id) REFERENCES public.tags(id)
+);
 CREATE TABLE public.task_completions (
   id integer NOT NULL DEFAULT nextval('task_completions_id_seq'::regclass),
   task_id integer,
@@ -121,10 +157,18 @@ CREATE TABLE public.task_completions (
   completion_quality integer CHECK (completion_quality >= 1 AND completion_quality <= 5),
   notes text,
   was_late boolean DEFAULT false,
+  time_spent_minutes integer,
+  points smallint DEFAULT '0'::smallint,
   CONSTRAINT task_completions_pkey PRIMARY KEY (id),
   CONSTRAINT task_completions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id)
 );
-
+CREATE TABLE public.task_tags (
+  task_id integer NOT NULL,
+  tag_id integer NOT NULL,
+  CONSTRAINT task_tags_pkey PRIMARY KEY (task_id, tag_id),
+  CONSTRAINT task_tags_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id),
+  CONSTRAINT task_tags_tag_id_fkey FOREIGN KEY (tag_id) REFERENCES public.tags(id)
+);
 CREATE TABLE public.tasks (
   id integer NOT NULL DEFAULT nextval('tasks_id_seq'::regclass),
   title character varying NOT NULL,
@@ -137,9 +181,9 @@ CREATE TABLE public.tasks (
   is_active boolean DEFAULT true,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
+  chain_group character varying,
   CONSTRAINT tasks_pkey PRIMARY KEY (id)
 );
-```
 
 Side notes: 
 
@@ -150,13 +194,14 @@ Side notes:
 - Supabase returns the inserted row automatically
 
 
-# Punishment Logic
+# Game of Life
 
-The flow of the punishments will go like this in terms of code logic: 
-
-1. Retrieve all active tasks
-2. Sort tasks into two buckets
-    A. Tasks which are overdue
-    B. Tasks which are less than 3 hours until due
-3. For all tasks in bucket A, sort further by priority levels, and then perform punishments based on those groupings
-4. For all tasks in bucket B, send an aggressively friendly notification either via email or through Twitter to notify you of your pending tasks 
+The `game_of_life.py` script serves as the primary accountability driver. It:
+1. Connects to `/api/tasks/remainder` to fetch tasks with relative time.
+2. Groups tasks into urgency buckets:
+   - **OVERDUE**: Tasks past their due date.
+   - **IMMEDIATE**: Less than 3 hours remaining.
+   - **URGENT**: Less than 12 hours remaining.
+   - **SOON**: Less than 24 hours remaining.
+   - **LATER**: Everything else.
+3. Sends notifications for each group via **ntfy.sh** to a dedicated channel.
