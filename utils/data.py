@@ -1,5 +1,5 @@
 from pydantic import BaseModel, field_validator
-from typing import Optional
+from typing import Dict, List, Optional
 from datetime import datetime
 import zoneinfo
 
@@ -72,8 +72,61 @@ class CompletionResponse(BaseModel):
     completed_at: datetime
     notes: Optional[str]
     was_late: bool
-    time_spent_minutes: int 
+    time_spent_minutes: Optional[int]
     points: int
 
 class CompletionUpdate(BaseModel):
     notes: str
+
+
+class CompletionActionResponse(BaseModel):
+    message: str
+    task_id: int
+    completed_at: datetime
+    points_earned: int
+    is_recurring: bool
+    next_due: Optional[datetime] = None
+
+
+class DomainSummaryTotals(BaseModel):
+    active_tasks: int
+    overdue_tasks: int
+    due_soon_tasks: int
+    recurring_tasks: int
+    completed_tasks: int
+    total_points: int
+
+
+class DomainSummaryItem(BaseModel):
+    category: str
+    active_tasks: int
+    overdue_tasks: int
+    due_soon_tasks: int
+    recurring_tasks: int
+    completed_tasks: int
+    total_points: int
+    last_completed_at: Optional[datetime] = None
+
+
+class DomainSummaryResponse(BaseModel):
+    generated_at: datetime
+    due_soon_window_hours: int
+    totals: DomainSummaryTotals
+    domains: List[DomainSummaryItem]
+    recent_completions: List[CompletionResponse]
+
+
+class MaintenanceSnapshotResponse(BaseModel):
+    generated_at: datetime
+    due_soon_window_hours: int
+    stale_after_days: int
+    counts: Dict[str, int]
+    active_by_category: Dict[str, int]
+    overdue_by_category: Dict[str, int]
+    due_soon_by_category: Dict[str, int]
+    points_by_category: Dict[str, int]
+    overdue_tasks: List[TaskRemainderResponse]
+    due_soon_tasks: List[TaskRemainderResponse]
+    untagged_active_tasks: List[TaskRemainderResponse]
+    stale_active_tasks: List[TaskRemainderResponse]
+    recent_completions: List[CompletionResponse]

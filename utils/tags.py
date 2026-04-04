@@ -2,11 +2,20 @@ import os, json, re
 from supabase import Client, create_client
 from anthropic import Anthropic
 from typing import List
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ACCESS_KEY = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_API_KEY")
+
+if not SUPABASE_URL or not SUPABASE_ACCESS_KEY:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_KEY or SUPABASE_API_KEY must be set")
 
 # Make the connection to Supabase instance
 supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
+    SUPABASE_URL,
+    SUPABASE_ACCESS_KEY
 )
 
 def build_hierarchy_string(tags):
