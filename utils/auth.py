@@ -89,6 +89,16 @@ def load_agent_registry() -> Dict[str, AgentPrincipal]:
     return registry
 
 
+# Map agent principal names to users table names for task scoping
+AGENT_TO_USER_MAP = {
+    "hermes": "Satyam",
+    "atma-agent": "Satyam",
+    "atma-readonly": "Satyam",
+    "Argus": "Argus",
+    "Veltiosi": "Veltiosi",
+}
+
+
 def authenticate_agent(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> AgentPrincipal:

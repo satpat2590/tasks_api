@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import Client, create_client
 from dotenv import load_dotenv
-from utils.auth import AgentPrincipal, require_read_agent, require_write_agent
+from utils.auth import AgentPrincipal, require_read_agent, require_write_agent, AGENT_TO_USER_MAP
 from utils.data import (
     CompletionActionResponse,
     CompletionData,
@@ -825,7 +825,7 @@ async def agent_get_active_tasks(
     agent: AgentPrincipal = Depends(require_read_agent),
 ):
     """Agent-scoped active task listing. Filters by agent's assigned tasks."""
-    tasks = fetch_tasks(active_only=True, assigned_to=agent.name)
+    tasks = fetch_tasks(active_only=True, assigned_to=AGENT_TO_USER_MAP.get(agent.name, agent.name))
     tasks = filter_tasks_by_category(tasks, category)
     tasks.sort(key=lambda t: t.get("id", 0))
     return tasks
@@ -838,7 +838,7 @@ async def agent_get_tasks_with_remainder(
 ):
     """Agent-scoped active tasks with time remaining."""
     now = datetime.now(timezone.utc)
-    tasks = fetch_tasks(active_only=True, assigned_to=agent.name)
+    tasks = fetch_tasks(active_only=True, assigned_to=AGENT_TO_USER_MAP.get(agent.name, agent.name))
     tasks = filter_tasks_by_category(tasks, category)
     tasks.sort(key=due_sort_key)
     return [with_time_remaining(task, now) for task in tasks]
@@ -851,7 +851,7 @@ async def agent_get_overdue_tasks(
 ):
     """Agent-scoped overdue task view."""
     now = datetime.now(timezone.utc)
-    tasks = fetch_tasks(active_only=True, assigned_to=agent.name)
+    tasks = fetch_tasks(active_only=True, assigned_to=AGENT_TO_USER_MAP.get(agent.name, agent.name))
     tasks = filter_tasks_by_category(tasks, category)
     overdue_tasks, _, _ = classify_active_tasks(tasks, DEFAULT_DUE_SOON_HOURS, now)
     return [with_time_remaining(task, now) for task in overdue_tasks]
@@ -865,7 +865,7 @@ async def agent_get_due_soon_tasks(
 ):
     """Agent-scoped near-due task view."""
     now = datetime.now(timezone.utc)
-    tasks = fetch_tasks(active_only=True, assigned_to=agent.name)
+    tasks = fetch_tasks(active_only=True, assigned_to=AGENT_TO_USER_MAP.get(agent.name, agent.name))
     tasks = filter_tasks_by_category(tasks, category)
     _, due_soon_tasks, _ = classify_active_tasks(tasks, hours, now)
     return [with_time_remaining(task, now) for task in due_soon_tasks]
@@ -876,9 +876,9 @@ async def agent_create_task(
     task: TaskCreate,
     agent: AgentPrincipal = Depends(require_write_agent),
 ):
-    """Agent-safe task creation endpoint. Auto-sets created_by to agent name."""
+    """Agent-safe task creation endpoint. Auto-sets created_by to agent's user mapping."""
     if not task.created_by:
-        task.created_by = agent.name
+        task.created_by = AGENT_TO_USER_MAP.get(agent.name, agent.name)
     return await create_task(task)
 
 
