@@ -86,12 +86,46 @@ def with_time_remaining(task: Dict, now: Optional[datetime] = None) -> Dict:
     return enriched
 
 
-def fetch_tasks(active_only: bool = False) -> List[Dict]:
+def _resolve_user_id(name: Optional[str]) -> Optional[int]:
+    """Look up a user ID by name from the users table."""
+    if not name:
+        return None
+    try:
+        response = supabase.table("users").select("id").eq("name", name).execute()
+        return response.data[0]["id"] if response.data else None
+    except Exception:
+        return None
+
+
+def _resolve_user_name(user_id: Optional[int]) -> Optional[str]:
+    """Look up a user name by ID from the users table."""
+    if not user_id:
+        return None
+    try:
+        response = supabase.table("users").select("name").eq("id", user_id).execute()
+        return response.data[0]["name"] if response.data else None
+    except Exception:
+        return None
+
+
+def fetch_tasks(active_only: bool = False, assigned_to: Optional[str] = None) -> List[Dict]:
+    """Fetch tasks, optionally filtered by active status and assigned user."""
     query = supabase.table("tasks").select("*")
     if active_only:
         query = query.eq("is_active", True)
+    if assigned_to:
+        user_id = _resolve_user_id(assigned_to)
+        if user_id:
+            query = query.eq("assigned_to", user_id)
+        else:
+            return []  # Unknown user — return empty
     response = query.execute()
-    return response.data or []
+    tasks = response.data or []
+    # Enrich with user names
+    for t in tasks:
+        t["assigned_to_name"] = _resolve_user_name(t.get("assigned_to"))
+        t["created_by_name"] = _resolve_user_name(t.get("created_by"))
+    return tasks
 
 
 def filter_tasks_by_category(tasks: List[Dict], category: Optional[str]) -> List[Dict]:
@@ -467,7 +501,7 @@ async def create_task(task: TaskCreate):
         :response: A TaskResponse object
     """
     try:
-        response = supabase.table('tasks').insert({
+        insert_data = {
             "title": task.title,
             "description": task.description,
             "category": task.category,
@@ -475,7 +509,19 @@ async def create_task(task: TaskCreate):
             "due_date": task.due_date.isoformat() if task.due_date else None,
             "is_recurring": task.is_recurring,
             "recurrence_pattern": task.recurrence_pattern
-        }).execute()
+        }
+
+        # Resolve user names to IDs for assignment
+        if task.assigned_to:
+            user_id = _resolve_user_id(task.assigned_to)
+            if user_id:
+                insert_data["assigned_to"] = user_id
+        if task.created_by:
+            user_id = _resolve_user_id(task.created_by)
+            if user_id:
+                insert_data["created_by"] = user_id
+
+        response = supabase.table('tasks').insert(insert_data).execute()
 
      # Retrieve task ID to place within task_tags table
         task_id = response.data[0]['id']
@@ -492,7 +538,11 @@ async def create_task(task: TaskCreate):
         except Exception as tagging_error:
             print(f"[WARN] Auto-tagging failed for task_id={task_id}: {tagging_error}")
 
-        return response.data[0]
+        # Enrich response with user names
+        result = response.data[0]
+        result["assigned_to_name"] = _resolve_user_name(result.get("assigned_to"))
+        result["created_by_name"] = _resolve_user_name(result.get("created_by"))
+        return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -527,6 +577,10 @@ async def update_task(
             update_data["recurrence_pattern"] = task.recurrence_pattern
         if task.is_active is not None:
             update_data["is_active"] = task.is_active
+        if task.assigned_to is not None:
+            user_id = _resolve_user_id(task.assigned_to)
+            if user_id:
+                update_data["assigned_to"] = user_id
         
         # Always update the updated_at timestamp
      # DISABLED SINCE THERE IS A TRIGGER IN THE DATABASE WHICH AUTOMATICALLY UPDATES THE 'updated_at' FIELD ON UPDATE QUERIES
@@ -766,9 +820,15 @@ async def get_skill_tree():
 ######## Agent-only API surface for Hermes / MCP wrappers
 
 @app.get("/api/agent/tasks", response_model=List[TaskResponse])
-async def agent_get_active_tasks(agent: AgentPrincipal = Depends(require_read_agent)):
-    """Agent-safe mirror of active task listing."""
-    return await get_active_tasks()
+async def agent_get_active_tasks(
+    category: Optional[str] = None,
+    agent: AgentPrincipal = Depends(require_read_agent),
+):
+    """Agent-scoped active task listing. Filters by agent's assigned tasks."""
+    tasks = fetch_tasks(active_only=True, assigned_to=agent.name)
+    tasks = filter_tasks_by_category(tasks, category)
+    tasks.sort(key=lambda t: t.get("id", 0))
+    return tasks
 
 
 @app.get("/api/agent/tasks/remainder", response_model=List[TaskRemainderResponse])
@@ -776,8 +836,12 @@ async def agent_get_tasks_with_remainder(
     category: Optional[str] = None,
     agent: AgentPrincipal = Depends(require_read_agent),
 ):
-    """Agent-safe mirror of active tasks with time remaining."""
-    return await get_tasks_with_remainder(category=category)
+    """Agent-scoped active tasks with time remaining."""
+    now = datetime.now(timezone.utc)
+    tasks = fetch_tasks(active_only=True, assigned_to=agent.name)
+    tasks = filter_tasks_by_category(tasks, category)
+    tasks.sort(key=due_sort_key)
+    return [with_time_remaining(task, now) for task in tasks]
 
 
 @app.get("/api/agent/tasks/overdue", response_model=List[TaskRemainderResponse])
@@ -785,8 +849,12 @@ async def agent_get_overdue_tasks(
     category: Optional[str] = None,
     agent: AgentPrincipal = Depends(require_read_agent),
 ):
-    """Agent-safe overdue task view."""
-    return await get_overdue_tasks(category=category)
+    """Agent-scoped overdue task view."""
+    now = datetime.now(timezone.utc)
+    tasks = fetch_tasks(active_only=True, assigned_to=agent.name)
+    tasks = filter_tasks_by_category(tasks, category)
+    overdue_tasks, _, _ = classify_active_tasks(tasks, DEFAULT_DUE_SOON_HOURS, now)
+    return [with_time_remaining(task, now) for task in overdue_tasks]
 
 
 @app.get("/api/agent/tasks/due-soon", response_model=List[TaskRemainderResponse])
@@ -795,8 +863,12 @@ async def agent_get_due_soon_tasks(
     category: Optional[str] = None,
     agent: AgentPrincipal = Depends(require_read_agent),
 ):
-    """Agent-safe near-due task view."""
-    return await get_due_soon_tasks(hours=hours, category=category)
+    """Agent-scoped near-due task view."""
+    now = datetime.now(timezone.utc)
+    tasks = fetch_tasks(active_only=True, assigned_to=agent.name)
+    tasks = filter_tasks_by_category(tasks, category)
+    _, due_soon_tasks, _ = classify_active_tasks(tasks, hours, now)
+    return [with_time_remaining(task, now) for task in due_soon_tasks]
 
 
 @app.post("/api/agent/tasks", response_model=TaskResponse)
@@ -804,7 +876,9 @@ async def agent_create_task(
     task: TaskCreate,
     agent: AgentPrincipal = Depends(require_write_agent),
 ):
-    """Agent-safe task creation endpoint."""
+    """Agent-safe task creation endpoint. Auto-sets created_by to agent name."""
+    if not task.created_by:
+        task.created_by = agent.name
     return await create_task(task)
 
 

@@ -13,6 +13,8 @@ class TaskCreate(BaseModel):
     due_date: Optional[datetime] = None
     is_recurring: bool = False
     recurrence_pattern: Optional[str] = None
+    assigned_to: Optional[str] = None    # user name (e.g. 'Argus', 'Veltiosi', 'Satyam')
+    created_by: Optional[str] = None     # user name of creator
 
     @field_validator('due_date')
     @classmethod
@@ -35,6 +37,10 @@ class TaskResponse(BaseModel):
     created_at: datetime
     needs_completion: Optional[bool] = None
     last_completed: Optional[datetime] = None
+    assigned_to: Optional[int] = None
+    assigned_to_name: Optional[str] = None
+    created_by: Optional[int] = None
+    created_by_name: Optional[str] = None
 
 class TaskRemainderResponse(TaskResponse):
     time_remaining: Optional[int] = None
@@ -48,6 +54,7 @@ class TaskUpdate(BaseModel):
     is_recurring: Optional[bool] = None
     recurrence_pattern: Optional[str] = None
     is_active: Optional[bool] = None
+    assigned_to: Optional[str] = None    # user name to reassign to
 
     @field_validator('due_date')
     @classmethod
