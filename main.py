@@ -51,7 +51,7 @@ DEFAULT_STALE_DAYS = 7
 # CORS for your frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://sbpatel.dev", "http://localhost:3000"],
+    allow_origins=["https://sbpatel.dev", "http://localhost:3000", "http://localhost:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -450,33 +450,34 @@ async def get_authenticated_agent(agent: AgentPrincipal = Depends(require_read_a
 
 
 @app.get("/api/tasks", response_model=List[TaskResponse])
-async def get_active_tasks():
+async def get_active_tasks(assigned_to: Optional[str] = None):
     """
         Retrieve all active tasks
 
-        :request: NONE
+        :request: Optional `assigned_to` query param (user name, e.g. 'Satyam')
+                  to only return tasks assigned to that user
         :response: A list of TaskResponse objects
     """
-    tasks = fetch_tasks(active_only=True)
+    tasks = fetch_tasks(active_only=True, assigned_to=assigned_to)
     tasks.sort(key=due_sort_key)
     return tasks
 
 @app.get("/api/tasks/remainder", response_model=List[TaskRemainderResponse])
-async def get_tasks_with_remainder(category: Optional[str] = None):
+async def get_tasks_with_remainder(category: Optional[str] = None, assigned_to: Optional[str] = None):
     """
     Retrieve all active tasks with calculated time remaining in hours
     """
     now = datetime.now(timezone.utc)
-    tasks = filter_tasks_by_category(fetch_tasks(active_only=True), category)
+    tasks = filter_tasks_by_category(fetch_tasks(active_only=True, assigned_to=assigned_to), category)
     tasks.sort(key=due_sort_key)
     return [with_time_remaining(task, now) for task in tasks]
 
 
 @app.get("/api/tasks/overdue", response_model=List[TaskRemainderResponse])
-async def get_overdue_tasks(category: Optional[str] = None):
+async def get_overdue_tasks(category: Optional[str] = None, assigned_to: Optional[str] = None):
     """Retrieve active tasks with due dates in the past."""
     now = datetime.now(timezone.utc)
-    tasks = filter_tasks_by_category(fetch_tasks(active_only=True), category)
+    tasks = filter_tasks_by_category(fetch_tasks(active_only=True, assigned_to=assigned_to), category)
     overdue_tasks, _, _ = classify_active_tasks(tasks, DEFAULT_DUE_SOON_HOURS, now)
     return [with_time_remaining(task, now) for task in overdue_tasks]
 
@@ -485,10 +486,11 @@ async def get_overdue_tasks(category: Optional[str] = None):
 async def get_due_soon_tasks(
     hours: int = Query(DEFAULT_DUE_SOON_HOURS, ge=1, le=168),
     category: Optional[str] = None,
+    assigned_to: Optional[str] = None,
 ):
     """Retrieve active tasks due within the requested number of hours."""
     now = datetime.now(timezone.utc)
-    tasks = filter_tasks_by_category(fetch_tasks(active_only=True), category)
+    tasks = filter_tasks_by_category(fetch_tasks(active_only=True, assigned_to=assigned_to), category)
     _, due_soon_tasks, _ = classify_active_tasks(tasks, hours, now)
     return [with_time_remaining(task, now) for task in due_soon_tasks]
 
