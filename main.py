@@ -1,4 +1,5 @@
  # main.py
+import asyncio
 import calendar
 import os
 import re
@@ -528,17 +529,21 @@ async def create_task(task: TaskCreate):
      # Retrieve task ID to place within task_tags table
         task_id = response.data[0]['id']
 
-     # Auto-tag with AI, but do not fail task creation if tagging is unavailable
-        try:
-            tags = await auto_tag_task(response.data[0])
-            print("\nThe list of leaf-node tag IDs:", tags)
-            for tag_id in tags:
-                supabase.table('task_tags').insert({
-                    'task_id': task_id,
-                    'tag_id': tag_id
-                }).execute()
-        except Exception as tagging_error:
-            print(f"[WARN] Auto-tagging failed for task_id={task_id}: {tagging_error}")
+     # Auto-tag with AI in the background, so task creation returns immediately
+        async def _auto_tag_in_background():
+            # Auto-tag with AI, but do not fail task creation if tagging is unavailable
+            try:
+                tags = await auto_tag_task(response.data[0])
+                print("\nThe list of leaf-node tag IDs:", tags)
+                for tag_id in tags:
+                    supabase.table('task_tags').insert({
+                        'task_id': task_id,
+                        'tag_id': tag_id
+                    }).execute()
+            except Exception as tagging_error:
+                print(f"[WARN] Auto-tagging failed for task_id={task_id}: {tagging_error}")
+
+        asyncio.create_task(_auto_tag_in_background())
 
         # Enrich response with user names
         result = response.data[0]
