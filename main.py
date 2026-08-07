@@ -1,6 +1,6 @@
  # main.py
+import asyncio
 import calendar
-import os
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -8,7 +8,6 @@ from typing import Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from supabase import Client, create_client
 from dotenv import load_dotenv
 from utils.auth import AgentPrincipal, require_read_agent, require_write_agent, AGENT_TO_USER_MAP
 from utils.data import (
@@ -32,17 +31,8 @@ app = FastAPI()
 
 load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ACCESS_KEY = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_API_KEY")
-
-if not SUPABASE_URL or not SUPABASE_ACCESS_KEY:
-    raise RuntimeError("SUPABASE_URL and SUPABASE_KEY or SUPABASE_API_KEY must be set")
-
-# Make the connection to Supabase instance
-supabase: Client = create_client(
-    SUPABASE_URL,
-    SUPABASE_ACCESS_KEY
-)
+# Shared Supabase client (see utils/db.py) — the tags pipeline reuses the same instance.
+from utils.db import supabase  # noqa: E402
 
 DEFAULT_CATEGORIES = ("mental", "physical", "social", "financial")
 DEFAULT_DUE_SOON_HOURS = 24
@@ -121,10 +111,21 @@ def fetch_tasks(active_only: bool = False, assigned_to: Optional[str] = None) ->
             return []  # Unknown user — return empty
     response = query.execute()
     tasks = response.data or []
-    # Enrich with user names
+
+    if not tasks:
+        return tasks
+
+    # Resolve all referenced user IDs in a batch instead of one query per task (avoids N+1).
+    user_ids = {t.get("assigned_to") for t in tasks} | {t.get("created_by") for t in tasks}
+    user_ids.discard(None)
+    name_by_id: Dict[int, str] = {}
+    if user_ids:
+        users_resp = supabase.table("users").select("id, name").in_("id", sorted(user_ids)).execute()
+        name_by_id = {row["id"]: row["name"] for row in (users_resp.data or [])}
+
     for t in tasks:
-        t["assigned_to_name"] = _resolve_user_name(t.get("assigned_to"))
-        t["created_by_name"] = _resolve_user_name(t.get("created_by"))
+        t["assigned_to_name"] = name_by_id.get(t.get("assigned_to"))
+        t["created_by_name"] = name_by_id.get(t.get("created_by"))
     return tasks
 
 
@@ -181,15 +182,12 @@ def transform_completion_rows(rows: List[Dict]) -> List[Dict]:
                 "completed_at": item["completed_at"],
                 "notes": item.get("notes"),
                 "was_late": item.get("was_late", False),
+                "quality": item.get("completion_quality"),
                 "time_spent_minutes": item.get("time_spent_minutes"),
                 "points": item.get("points", 0) or 0,
             }
         )
     return completions
-
-
-def fetch_recent_completions(limit: int = 10) -> List[Dict]:
-    return transform_completion_rows(fetch_completion_rows(limit=limit))
 
 
 def calculate_points(task_data: Dict, quality_score: int, was_late: bool) -> int:
@@ -253,29 +251,48 @@ def complete_task_record(task_id: int, completion_data: Optional[CompletionData]
         raise HTTPException(status_code=404, detail="Task not found")
 
     task_data = task_response.data[0]
+    is_recurring = bool(task_data.get("is_recurring"))
+
+    if is_recurring:
+        # Idempotency guard: if this task already has a completion in the
+        # current recurrence period, don't double-insert / double-award points.
+        existing = _period_completion_exists(task_id, task_data)
+        if existing:
+            prev = existing[0]
+            return {
+                "message": f"Task already completed this period ({prev.get('points', 0)} points)",
+                "task_id": task_id,
+                "completed_at": parse_datetime(prev.get("completed_at")) or datetime.now(timezone.utc),
+                "points_earned": prev.get("points", 0),
+                "is_recurring": True,
+                "next_due": parse_datetime(task_data.get("due_date")),
+            }
+
     completed_at = datetime.now(timezone.utc)
     due_date = parse_datetime(task_data.get("due_date"))
     was_late = bool(due_date and completed_at > due_date)
-    overdue_minutes = 0
-    if due_date and was_late:
-        overdue_minutes = int((completed_at - due_date).total_seconds() // 60)
 
     quality_score = completion_data.quality if completion_data and completion_data.quality is not None else 3
     notes = completion_data.notes if completion_data and completion_data.notes is not None else ""
     points_earned = calculate_points(task_data, quality_score, was_late)
 
+    # NOTE: no real time-spent tracking exists; `was_late` carries the lateness
+    # signal separately. Do not alias overdue minutes into time_spent_minutes.
     completion_record = {
         "task_id": task_id,
         "completion_quality": quality_score,
         "notes": notes,
         "was_late": was_late,
-        "time_spent_minutes": overdue_minutes,
+        "time_spent_minutes": None,
         "points": points_earned,
         "completed_at": completed_at.isoformat(),
     }
-    supabase.table("task_completions").insert(completion_record).execute()
+    # Insert completion first (source of truth).
+    inserted = supabase.table("task_completions").insert(completion_record).execute()
+    if not inserted.data:
+        raise HTTPException(status_code=500, detail="Failed to record completion")
 
-    if not task_data.get("is_recurring"):
+    if not is_recurring:
         supabase.table("tasks").update({"is_active": False}).eq("id", task_id).execute()
         return {
             "message": f"Task completed! {points_earned} points",
@@ -296,6 +313,38 @@ def complete_task_record(task_id: int, completion_data: Optional[CompletionData]
         "is_recurring": True,
         "next_due": next_due,
     }
+
+
+def _period_completion_exists(task_id: int, task_data: Dict) -> List[Dict]:
+    """Return recent completions for a recurring task within its current period."""
+    now = datetime.now(timezone.utc)
+    due = parse_datetime(task_data.get("due_date"))
+    period = (task_data.get("recurrence_pattern") or "").strip().lower()
+    if period not in ("daily", "weekly", "monthly", "yearly"):
+        # Fall back to any completion after the last 48h (covers custom patterns).
+        window_start = now - timedelta(hours=48)
+    else:
+        if period == "daily":
+            window_start = now - timedelta(hours=24)
+        elif period == "weekly":
+            window_start = now - timedelta(days=7)
+        elif period == "monthly":
+            window_start = now - timedelta(days=31)
+        else:  # yearly
+            window_start = now - timedelta(days=366)
+        if due:
+            window_start = min(window_start, due - timedelta(hours=1))
+
+    resp = (
+        supabase.table("task_completions")
+        .select("id, points, completed_at")
+        .eq("task_id", task_id)
+        .gte("completed_at", window_start.isoformat())
+        .order("completed_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return resp.data or []
 
 
 def collect_category_set(tasks: List[Dict], completion_rows: List[Dict]) -> List[str]:
@@ -369,7 +418,7 @@ def build_domain_summary_payload(due_soon_hours: int = DEFAULT_DUE_SOON_HOURS, r
         due_soon_window_hours=due_soon_hours,
         totals=totals,
         domains=domains,
-        recent_completions=fetch_recent_completions(recent_completion_limit),
+        recent_completions=transform_completion_rows(completion_rows)[:recent_completion_limit],
     ).model_dump()
 
 
@@ -422,7 +471,7 @@ def build_maintenance_snapshot_payload(
         due_soon_tasks=[with_time_remaining(task, now) for task in due_soon_tasks],
         untagged_active_tasks=[with_time_remaining(task, now) for task in sorted(untagged_active_tasks, key=due_sort_key)],
         stale_active_tasks=[with_time_remaining(task, now) for task in sorted(stale_active_tasks, key=due_sort_key)],
-        recent_completions=fetch_recent_completions(recent_completion_limit),
+        recent_completions=transform_completion_rows(completion_rows)[:recent_completion_limit],
     ).model_dump()
 
 
@@ -495,7 +544,7 @@ async def get_due_soon_tasks(
     return [with_time_remaining(task, now) for task in due_soon_tasks]
 
 @app.post("/api/tasks", response_model=TaskResponse)
-async def create_task(task: TaskCreate):
+async def create_task(task: TaskCreate, _: AgentPrincipal = Depends(require_write_agent)):
     """
         Create a new task using the TaskCreate data definition in /utils/data.py
 
@@ -528,17 +577,21 @@ async def create_task(task: TaskCreate):
      # Retrieve task ID to place within task_tags table
         task_id = response.data[0]['id']
 
-     # Auto-tag with AI, but do not fail task creation if tagging is unavailable
-        try:
-            tags = await auto_tag_task(response.data[0])
-            print("\nThe list of leaf-node tag IDs:", tags)
-            for tag_id in tags:
-                supabase.table('task_tags').insert({
-                    'task_id': task_id,
-                    'tag_id': tag_id
-                }).execute()
-        except Exception as tagging_error:
-            print(f"[WARN] Auto-tagging failed for task_id={task_id}: {tagging_error}")
+     # Auto-tag with AI in the background, so task creation returns immediately
+        async def _auto_tag_in_background():
+            # Auto-tag with AI, but do not fail task creation if tagging is unavailable
+            try:
+                tags = await auto_tag_task(response.data[0])
+                print("\nThe list of leaf-node tag IDs:", tags)
+                for tag_id in tags:
+                    supabase.table('task_tags').insert({
+                        'task_id': task_id,
+                        'tag_id': tag_id
+                    }).execute()
+            except Exception as tagging_error:
+                print(f"[WARN] Auto-tagging failed for task_id={task_id}: {tagging_error}")
+
+        asyncio.create_task(_auto_tag_in_background())
 
         # Enrich response with user names
         result = response.data[0]
@@ -553,6 +606,7 @@ async def create_task(task: TaskCreate):
 async def update_task(
     task_id: int,
     task: TaskUpdate,
+    _: AgentPrincipal = Depends(require_write_agent),
 ):
     """
         Update fields of a task based on the TaskUpdate data definition in /utils/data.py
@@ -561,39 +615,50 @@ async def update_task(
         :response: A TaskResponse object with the new fields of the updated task
     """
     try:
-     # Populate the JSON request body so that you can update the fields in the row for the task_id
+     # Populate the JSON request body so that you can update the fields in the row for the task_id.
+     # Pydantic v2: model_fields_set records which fields the client explicitly sent,
+     # so an explicit `null` is treated as "clear this field" rather than "leave unchanged".
         update_data = {}
-        if task.title is not None:
+        provided = task.model_fields_set
+        if "title" in provided:
             update_data["title"] = task.title
-        if task.description is not None:
+        if "description" in provided:
             update_data["description"] = task.description
-        if task.category is not None:
+        if "category" in provided:
             update_data["category"] = task.category
-        if task.priority is not None:
+        if "priority" in provided:
             update_data["priority"] = task.priority
-        if task.due_date is not None:
-            update_data["due_date"] = task.due_date.isoformat()
-        if task.is_recurring is not None:
+        if "due_date" in provided:
+            update_data["due_date"] = task.due_date.isoformat() if task.due_date else None
+        if "is_recurring" in provided:
             update_data["is_recurring"] = task.is_recurring
-        if task.recurrence_pattern is not None:
+        if "recurrence_pattern" in provided:
             update_data["recurrence_pattern"] = task.recurrence_pattern
-        if task.is_active is not None:
+        if "is_active" in provided:
             update_data["is_active"] = task.is_active
-        if task.assigned_to is not None:
-            user_id = _resolve_user_id(task.assigned_to)
-            if user_id:
-                update_data["assigned_to"] = user_id
+        if "assigned_to" in provided:
+            user_id = _resolve_user_id(task.assigned_to) if task.assigned_to else None
+            update_data["assigned_to"] = user_id
         
         # Always update the updated_at timestamp
      # DISABLED SINCE THERE IS A TRIGGER IN THE DATABASE WHICH AUTOMATICALLY UPDATES THE 'updated_at' FIELD ON UPDATE QUERIES
         #update_data["updated_at"] = datetime.now().isoformat()
         
+        if not update_data:
+            # Nothing to update — return the current row unchanged.
+            cur = supabase.table('tasks').select("*").eq('id', task_id).execute()
+            if not cur.data:
+                raise HTTPException(status_code=404, detail="Task not found")
+            return cur.data[0]
+
         response = supabase.table('tasks').update(update_data).eq('id', task_id).execute()
         
         if not response.data:
             raise HTTPException(status_code=404, detail="Task not found")
             
         return response.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -602,6 +667,7 @@ async def update_task(
 async def complete_task(
     task_id: int,
     completion_data: Optional[CompletionData] = None,
+    _: AgentPrincipal = Depends(require_write_agent),
 ):
     """Complete a task, log the completion, and advance recurrence if needed."""
     try:
@@ -616,6 +682,7 @@ async def complete_task(
 async def disable_task(
     task_id: int,
     completion_data: Optional[CompletionData] = None,
+    _: AgentPrincipal = Depends(require_write_agent),
 ):
     """
     Complete task - log completion and handle recurring tasks
@@ -634,8 +701,9 @@ async def disable_task(
         raise HTTPException(status_code=400, detail=str(e))
     
 
+
 @app.delete("/api/tasks/{task_id}")
-async def hard_delete_task(task_id: int):
+async def hard_delete_task(task_id: int, _: AgentPrincipal = Depends(require_write_agent)):
     """
         Hard delete a task from the table entirely
 
@@ -657,6 +725,8 @@ async def hard_delete_task(task_id: int):
         supabase.table('tasks').delete().eq('id', task_id).execute()
 
         return {"message": "Task and all related records permanently deleted"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     
@@ -676,6 +746,7 @@ async def get_completed_tasks(
 async def update_completion_notes(
     completion_id: int,
     update: CompletionUpdate,
+    _: AgentPrincipal = Depends(require_write_agent),
 ):
     """Update notes for a completed task"""
     response = supabase.table('task_completions').update({
@@ -881,7 +952,28 @@ async def agent_create_task(
     """Agent-safe task creation endpoint. Auto-sets created_by to agent's user mapping."""
     if not task.created_by:
         task.created_by = AGENT_TO_USER_MAP.get(agent.name, agent.name)
+    if not task.assigned_to:
+        task.assigned_to = AGENT_TO_USER_MAP.get(agent.name, agent.name)
     return await create_task(task)
+
+
+def _agent_owns_task(task_id: int, agent: AgentPrincipal) -> Dict:
+    """Load a task and enforce that it is owned by the agent's mapped user."""
+    mapped_user = AGENT_TO_USER_MAP.get(agent.name, agent.name)
+    resp = supabase.table("tasks").select("*").eq("id", task_id).execute()
+    if not resp.data:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task_row = resp.data[0]
+
+    # Ownership: the task's assigned user must resolve to the agent's mapped user.
+    assigned_id = task_row.get("assigned_to")
+    owner_name = _resolve_user_name(assigned_id) if assigned_id else None
+    if mapped_user and owner_name and owner_name != mapped_user:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Agent '{agent.name}' may not modify a task owned by '{owner_name}'",
+        )
+    return task_row
 
 
 @app.patch("/api/agent/tasks/{task_id}", response_model=TaskResponse)
@@ -891,6 +983,7 @@ async def agent_update_task(
     agent: AgentPrincipal = Depends(require_write_agent),
 ):
     """Agent-safe task update endpoint."""
+    _agent_owns_task(task_id, agent)
     return await update_task(task_id, task)
 
 
@@ -901,6 +994,7 @@ async def agent_complete_task(
     agent: AgentPrincipal = Depends(require_write_agent),
 ):
     """Agent-safe task completion endpoint."""
+    _agent_owns_task(task_id, agent)
     return await complete_task(task_id, completion_data)
 
 

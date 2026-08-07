@@ -139,7 +139,7 @@ def run(client, on_date, dry_run=False):
                     "completion_quality": quality,
                     "notes": f"auto: {evidence}",
                     "was_late": False,
-                    "time_spent_minutes": 0,
+                    "time_spent_minutes": None,
                     "points": points,
                 }
             ).execute()

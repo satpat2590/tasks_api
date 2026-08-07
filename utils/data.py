@@ -79,6 +79,7 @@ class CompletionResponse(BaseModel):
     completed_at: datetime
     notes: Optional[str]
     was_late: bool
+    quality: Optional[int] = None
     time_spent_minutes: Optional[int]
     points: int
 

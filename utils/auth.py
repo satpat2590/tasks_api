@@ -85,6 +85,7 @@ def load_agent_registry() -> Dict[str, AgentPrincipal]:
     _register_token(registry, "atma-readonly", os.getenv("ATMA_READONLY_AGENT_TOKEN"), ("read",))
     _register_token(registry, "Argus", os.getenv("ATMA_ARGUS_TOKEN"), ("read", "write"))
     _register_token(registry, "Veltiosi", os.getenv("ATMA_VELTIOSI_TOKEN"), ("read", "write"))
+    _register_token(registry, "Gyani", os.getenv("ATMA_GYANI_TOKEN"), ("read", "write"))
 
     return registry
 
@@ -96,6 +97,7 @@ AGENT_TO_USER_MAP = {
     "atma-readonly": "Satyam",
     "Argus": "Argus",
     "Veltiosi": "Veltiosi",
+    "Gyani": "Satyam",
 }
 
 

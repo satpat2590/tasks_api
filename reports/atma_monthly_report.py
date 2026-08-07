@@ -29,16 +29,29 @@ ATMA_TOKEN = os.getenv("ATMA_BEARER_TOKEN", os.getenv("ATMA_HERMES_TOKEN", ""))
 
 
 def fetch_completions(limit: int = 500) -> List[dict]:
-    """Fetch all task completions from Atma API."""
+    """Fetch all task completions from Atma API, paginating to avoid truncation."""
     headers = {"Authorization": f"Bearer {ATMA_TOKEN}"}
-    r = requests.get(
-        f"{ATMA_BASE_URL}/api/agent/completed",
-        headers=headers,
-        params={"limit": limit},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
+    page_size = 500
+    completions: List[dict] = []
+    offset = 0
+    while True:
+        r = requests.get(
+            f"{ATMA_BASE_URL}/api/agent/completed",
+            headers=headers,
+            params={"limit": page_size, "offset": offset},
+            timeout=30,
+        )
+        r.raise_for_status()
+        batch = r.json()
+        if not batch:
+            break
+        completions.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += len(batch)
+        if len(completions) >= limit:
+            break
+    return completions[:limit]
 
 
 def fetch_active_tasks() -> List[dict]:
