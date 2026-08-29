@@ -222,27 +222,56 @@ def add_years(current_due: datetime, years: int) -> datetime:
     return current_due.replace(year=target_year, day=day)
 
 
-def calculate_next_due_date(current_due: datetime, pattern: Optional[str]) -> datetime:
+def calculate_next_due_date(
+    current_due: datetime,
+    pattern: Optional[str],
+    completed_at: Optional[datetime] = None,
+) -> datetime:
+    """Next due date for a recurring task.
+
+    Anchored on `completed_at` (when given), NOT on the stored due_date:
+    anchoring on a stale/corrupted stored date makes the error compound
+    forever (a daily task whose due_date drifted to 2027 would keep
+    returning 2027+1d on every completion). The stored due_date only
+    contributes its time-of-day, so the daily boundary stays stable.
+    """
     normalized = (pattern or "").strip().lower()
 
+    anchor = completed_at or current_due
+    if current_due is not None:
+        # Preserve the recurrence boundary's time-of-day when it's sane.
+        anchor = anchor.replace(
+            hour=current_due.hour,
+            minute=current_due.minute,
+            second=current_due.second,
+            microsecond=current_due.microsecond,
+        )
+
+    def next_after(dt: datetime, step: timedelta) -> datetime:
+        candidate = dt
+        # Walk forward until strictly after the anchor moment.
+        while candidate <= anchor:
+            candidate += step
+        return candidate
+
     if normalized == "daily":
-        return current_due + timedelta(days=1)
+        return next_after(anchor, timedelta(days=1))
     if normalized == "weekly":
-        return current_due + timedelta(weeks=1)
+        return next_after(anchor, timedelta(weeks=1))
     if normalized == "monthly":
-        return add_months(current_due, 1)
+        return next_after(add_months(anchor, 1), timedelta(0)) if anchor <= add_months(anchor, 1) else add_months(anchor, 2)
     if normalized == "yearly":
-        return add_years(current_due, 1)
+        return add_years(anchor, 1) if add_years(anchor, 1) > anchor else add_years(anchor, 2)
 
     match = re.match(r"every (\d+) days?", normalized)
     if match:
-        return current_due + timedelta(days=int(match.group(1)))
+        return next_after(anchor, timedelta(days=int(match.group(1))))
 
     match = re.match(r"every (\d+) weeks?", normalized)
     if match:
-        return current_due + timedelta(weeks=int(match.group(1)))
+        return next_after(anchor, timedelta(weeks=int(match.group(1))))
 
-    return current_due + timedelta(weeks=1)
+    return next_after(anchor, timedelta(weeks=1))
 
 
 def complete_task_record(task_id: int, completion_data: Optional[CompletionData]) -> Dict:
@@ -303,7 +332,11 @@ def complete_task_record(task_id: int, completion_data: Optional[CompletionData]
             "next_due": None,
         }
 
-    next_due = calculate_next_due_date(due_date or completed_at, task_data.get("recurrence_pattern"))
+    next_due = calculate_next_due_date(
+        due_date or completed_at,
+        task_data.get("recurrence_pattern"),
+        completed_at=completed_at,
+    )
     supabase.table("tasks").update({"due_date": next_due.isoformat(), "is_active": True}).eq("id", task_id).execute()
     return {
         "message": f"Recurring task completed! {points_earned} points. Next due: {next_due.date()}",
